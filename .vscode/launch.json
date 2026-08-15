@@ -19,6 +19,14 @@
       "program": "${workspaceFolder}/playground.py",
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "save_bangumi",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/playground-save-bangumi.py",
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }

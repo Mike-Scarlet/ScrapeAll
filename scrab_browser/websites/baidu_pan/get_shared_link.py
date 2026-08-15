@@ -1,5 +1,6 @@
 
 import logging
+import asyncio
 from playwright.async_api import BrowserContext, Page
 from scrab_browser.websites.baidu_pan.predicates import WaitForBaidupanSharedLinkStable
   
@@ -25,6 +26,10 @@ class BaiduPanSharedLink:
       await page.goto(shared_link_url)
       await page.wait_for_load_state("domcontentloaded")
       # await page.wait_for_load_state("load")
+      
+      if shared_link_url[-8:-4] == "pwd=":
+        logging.info(f"has pwd in link, do wait for a while")
+        await asyncio.sleep(5)
 
       if await BaiduPanSharedLink.IsInRequirePasswordPage(page):
         if password is None:
