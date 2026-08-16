@@ -9,8 +9,9 @@ class PostItem:
   stat 生命周期（帖子被作者更新 -> 时间戳变新 -> 重置为 0 重走全程）：
     0 = discovered  已发现（仅列表 meta：url/标题/时间戳）
     1 = fetched     帖子页已抓取保存
-    2 = parsed      已解析（含非目标帖，links 为空）
+    2 = parsed      已解析（工况内，links 已写入）
     3 = consumed    解析结果已交后续流程处理（终态）
+    4 = out_of_scope 解析过滤判定工况外（meta-label 无「动画」；终态）
     -1 = fetch 失败   -2 = parse 失败
   """
   url: str = Field(primary_key=True)

@@ -1,117 +1,107 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from urllib.parse import unquote
 
-# 纯逻辑模块：页面层只取原始数据（文本/属性），筛选与解析判断全在这里
+from bs4 import BeautifulSoup
 
-# onclick="openDl('名称', '提取码', 'url')" -> 取括号里的单引号字符串参数
-ONCLICK_ARGS_RE = re.compile(r"\(([^)]*)\)")
-QUOTED_RE = re.compile(r"'([^']*)'")
+from scrape_all.sites.cangku import locators
+
+# 纯逻辑模块：帖子页解析。
+# 第一步 分类过滤：meta-label（分类链）出现「动画」二字才工况内，其余 OUT_OF_SCOPE。
+# 第二步 合集 box 解析（第一种情况，qr-image-link）：折叠卡标题含「合集」的 dl-box——
+#   dl-meta 的 info 里写 提取码/解压密码；dl-item 的 icon 样式里 favicon?url= 包着
+#   二维码原图地址（url 解码后可直接下载），二维码内容即真实网盘链接（见 qr.py）。
+# 折叠卡不用真的点开：Vue 只是视觉折叠，DOM 全量渲染（219673 验证）。
+
+TARGET_CATEGORY = "动画"
+COLLECTION_KEYWORD = "合集"
 
 
-def parse_onclick_args(onclick: Optional[str]) -> tuple[str, ...]:
-  """onclick 属性原文 -> 字符串参数组；解不出返回空组"""
-  if not onclick:
-    return ()
-  m = ONCLICK_ARGS_RE.search(onclick)
-  if not m:
-    return ()
-  return tuple(QUOTED_RE.findall(m.group(1)))
+def meta_labels(html: str) -> list[str]:
+  """帖子页分类 meta-label 文本列表（精确 class 匹配，不含收藏/点赞等附加 class 项）"""
+  soup = BeautifulSoup(html, "lxml")
+  return [" ".join(el.get_text(" ", strip=True).split()) for el in soup.select(locators.META_LABEL)]
+
+
+def is_target_post(html: str) -> bool:
+  """工况内判定：任一分类 meta-label 文本包含「动画」"""
+  return any(TARGET_CATEGORY in label for label in meta_labels(html))
+
+
+# ---- 合集 box 解析 ----
+
+# info 原文形如「提取：yezi / 密码：yejiang」，密码项也可能写作 解压密码
+EXTRACT_PWD_RE = re.compile(r"提取(?:码)?\s*[:：]\s*([A-Za-z0-9]+)")
+UNZIP_PWD_RE = re.compile(r"(?:解压)?密码\s*[:：]\s*([A-Za-z0-9]+)")
+
+# dl-item 图标样式：favicon 代理的 url 参数是 url 编码的二维码原图地址；# 后是 fragment
+FAVICON_QR_RE = re.compile(r"favicon\?url=([^)'\"]+)")
+
+
+@dataclass
+class DlItem:
+  name: str               # 显示名（如 百度网盘）
+  qr_image_url: str = ""  # 二维码原图地址；非二维码类 dl-item（其他情况）为空
 
 
 @dataclass
 class DlBox:
-  """一个 dl-box 的原始数据（页面层取数，未筛选）"""
-  card_title: str = ""                        # 所在折叠卡按钮文本（"合集"判断用）
-  meta: dict = field(default_factory=dict)    # meta 项 class 名 -> 文本
-  links: dict = field(default_factory=dict)   # dl-item 显示名 -> onclick 属性原文
+  card_title: str = ""    # 所在折叠卡标题（「合集」筛选依据）
+  title: str = ""         # dl-box 标题
+  date: str = ""
+  source: str = ""        # from 项（自整理 等）
+  info: str = ""          # info 原文（提取码/解压密码写在里面）
+  extract_pwd: str = ""   # 提取码
+  unzip_pwd: str = ""     # 解压密码
+  items: list = field(default_factory=list)   # list[DlItem]
 
 
-@dataclass
-class RawPost:
-  """帖子页解析出的原始内容"""
-  labels: list = field(default_factory=list)
-  boxes: list = field(default_factory=list)
+def parse_info(info: str) -> tuple[str, str]:
+  """info 原文 -> (提取码, 解压密码)；解不出的项为空串"""
+  m = EXTRACT_PWD_RE.search(info or "")
+  extract = m.group(1) if m else ""
+  m = UNZIP_PWD_RE.search(info or "")
+  unzip = m.group(1) if m else ""
+  return extract, unzip
 
 
-@dataclass
-class PanLink:
-  """筛选后保留的一条网盘链接"""
-  name: str              # dl-item 显示名
-  url: str
-  pwd: Optional[str] = None
-  pan_type: str = ""     # baidu / quark / aliyun / magnet / other
+def item_qr_url(a_el) -> str:
+  """dl-item 元素 -> 二维码原图地址（url 解码、去 fragment）；没有则空串"""
+  icon = a_el.find("i", class_="icon")
+  style = icon.get("style") if icon else None
+  if not style:
+    return ""
+  m = FAVICON_QR_RE.search(style)
+  if not m:
+    return ""
+  return unquote(m.group(1).split("#", 1)[0])
 
 
-BAIDU_RE = re.compile(r"pan\.baidu\.com", re.I)
-QUARK_RE = re.compile(r"pan\.quark\.cn", re.I)
-ALIYUN_RE = re.compile(r"(aliyundrive|alipan)", re.I)
-
-
-def classify_link(url: str) -> str:
-  if url.startswith("magnet:"):
-    return "magnet"
-  if BAIDU_RE.search(url):
-    return "baidu"
-  if QUARK_RE.search(url):
-    return "quark"
-  if ALIYUN_RE.search(url):
-    return "aliyun"
-  return "other"
-
-
-# 提取码按可信度依次找：url 查询参数 > 文本"提取码xxxx" > onclick 里独立的 4 位参数
-PWD_QUERY_RE = re.compile(r"[?&](?:pwd|password|code)=([A-Za-z0-9]{4})", re.I)
-PWD_TEXT_RE = re.compile(r"提取码[:：\s]*([A-Za-z0-9]{4})")
-PWD_ARG_RE = re.compile(r"^[A-Za-z0-9]{4}$")
-
-
-def extract_pwd(url: str, name: str = "", extra_args: Sequence[str] = ()) -> Optional[str]:
-  m = PWD_QUERY_RE.search(url or "")
-  if m:
-    return m.group(1)
-  m = PWD_TEXT_RE.search(name or "")
-  if m:
-    return m.group(1)
-  for arg in extra_args:
-    if PWD_ARG_RE.match(arg):
-      return arg
-  return None
-
-
-@dataclass
-class FilterRules:
-  require_label: Optional[str] = "动画"        # 帖子标签必须包含；None = 不限
-  collection_keyword: Optional[str] = "合集"   # 折叠卡标题必须包含；None = 不限
-
-
-@dataclass
-class PostContent:
-  """筛选后的帖子内容"""
-  links: list = field(default_factory=list)    # PanLink 列表（所有网盘类型，pan_type 区分）
-  skipped: list = field(default_factory=list)  # 解析失败的链接描述，排查用
-
-
-def filter_post(raw: RawPost, rules: Optional[FilterRules] = None) -> Optional[PostContent]:
-  """按规则筛选帖子。返回 None = 不是目标帖；PostContent = 保留内容（links 可能为空）"""
-  if rules is None:
-    rules = FilterRules()
-
-  labels = [label.strip() for label in raw.labels]
-  if rules.require_label and rules.require_label not in labels:
-    return None
-
-  content = PostContent()
-  for box in raw.boxes:
-    if rules.collection_keyword and rules.collection_keyword not in box.card_title:
+def parse_collection_boxes(html: str) -> list[DlBox]:
+  """折叠卡标题含「合集」的全部 dl-box 结构化"""
+  soup = BeautifulSoup(html, "lxml")
+  boxes = []
+  for card in soup.select(locators.COLLAPSE_CARD):
+    btn = card.select_one(locators.COLLAPSE_BTN)
+    card_title = btn.get_text(strip=True) if btn else ""
+    if COLLECTION_KEYWORD not in card_title:
       continue
-    for name, onclick in box.links.items():
-      args = parse_onclick_args(onclick)
-      url = args[-1] if args else ""
-      if not url:
-        content.skipped.append(f"{name}: onclick 无法解析 ({onclick})")
-        continue
-      pwd = extract_pwd(url, name, args[:-1])
-      content.links.append(PanLink(name=name, url=url, pwd=pwd, pan_type=classify_link(url)))
-  return content
+    for box_el in card.select(locators.DL_BOX):
+      box = DlBox(card_title=card_title)
+      title_el = box_el.select_one(".title")
+      box.title = title_el.get_text(strip=True) if title_el else ""
+      for meta_el in box_el.select(locators.DL_META_ITEM):
+        span = meta_el.find("span")
+        key = span.get("class")[0] if (span is not None and span.get("class")) else ""
+        if key == "date":
+          box.date = meta_el.get_text(strip=True)
+        elif key == "from":
+          box.source = meta_el.get_text(strip=True)
+        elif key == "info":
+          box.info = meta_el.get_text(strip=True)
+      box.extract_pwd, box.unzip_pwd = parse_info(box.info)
+      for a_el in box_el.select(locators.DL_ITEM):
+        box.items.append(DlItem(name=a_el.get_text(strip=True), qr_image_url=item_qr_url(a_el)))
+      boxes.append(box)
+  return boxes

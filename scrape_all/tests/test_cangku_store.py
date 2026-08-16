@@ -92,6 +92,16 @@ def test_stat_lifecycle(tmp_path):
     assert get_item(store, "u3").stat == Stat.PARSE_FAILED
 
 
+def test_mark_out_of_scope(tmp_path):
+  with make_store(tmp_path) as store:
+    store.upsert_posts([PostRef("u1", "t1", "2026-08-10")])
+    store.mark_fetched("u1")
+    store.mark_out_of_scope("u1")                       # 过滤判定工况外 -> 终态
+    item = get_item(store, "u1")
+    assert item.stat == Stat.OUT_OF_SCOPE and item.links_json == ""
+    assert store.pending_parse() == []                  # 不再进解析队列
+
+
 def test_history_done_flag(tmp_path):
   with make_store(tmp_path) as store:
     assert store.get_flag("yejiang:309550:history_done") is False

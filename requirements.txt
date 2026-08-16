@@ -1,6 +1,9 @@
 beautifulsoup4
 lxml
 playwright==1.40.0
+patchright==1.61.2    # playwright 反检测分支，cangku stealth 会话用（过 CF 挑战）
+opencv-python         # 二维码解码
+numpy
 
 # dev / tests
 pytest

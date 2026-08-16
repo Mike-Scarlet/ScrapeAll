@@ -16,8 +16,9 @@ class Stat(IntEnum):
   """帖子处理状态机；帖子被更新时重置回 DISCOVERED 重走全程"""
   DISCOVERED = 0    # 刚被 walk 出来，仅有列表 meta
   FETCHED = 1       # 帖子页已抓取保存
-  PARSED = 2        # 已解析（含非目标帖，links 为空）
+  PARSED = 2        # 已解析（工况内，links 已写入）
   CONSUMED = 3      # 解析结果已交后续流程处理（终态）
+  OUT_OF_SCOPE = 4  # 解析第一步过滤判定工况外（meta-label 无「动画」；终态）
   FETCH_FAILED = -1
   PARSE_FAILED = -2
 
@@ -106,7 +107,7 @@ class PostStore:
     return self.db.QueryRecords(PostItem, where="stat = ?", params=(int(Stat.FETCHED),))
 
   def save_parsed(self, url: str, links: list, stat: int = int(Stat.PARSED)):
-    """parse 阶段写入筛选结果；links 为 PanLink 的 dict 列表"""
+    """parse 阶段写入筛选结果；links 为链接记录的 dict 列表（格式随解析规则定）"""
     item = PostItem(url=url)
     item.links_json = json.dumps(links, ensure_ascii=False)
     item.stat = stat
@@ -114,6 +115,11 @@ class PostStore:
 
   def mark_parse_failed(self, url: str):
     item = PostItem(url=url, stat=int(Stat.PARSE_FAILED))
+    self.db.RecordFieldChanged(item, ["stat"])
+
+  def mark_out_of_scope(self, url: str):
+    """过滤判定工况外（分类 meta-label 无「动画」），直接终态，links 留空"""
+    item = PostItem(url=url, stat=int(Stat.OUT_OF_SCOPE))
     self.db.RecordFieldChanged(item, ["stat"])
 
   def mark_consumed(self, url: str):

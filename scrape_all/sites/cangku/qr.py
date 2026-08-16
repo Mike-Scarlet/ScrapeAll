@@ -1,0 +1,54 @@
+
+import time
+
+import cv2
+import numpy as np
+
+# 二维码取图 + 解码。
+# 取图必须走 playwright 浏览器页面（不要用 python http 客户端）：
+#   - CDN 对代理出口 IP 拉黑、对 python TLS 指纹拉黑，真浏览器直连也可能吃 CF 挑战
+#   - 图 URL 返回 403/503 + HTML 视为 Cloudflare 挑战：打印提示、停在那里等
+#     用户在窗口里人工过验证，轮询直到放行（cf_clearance 留在持久化 profile 里）
+#   - api.cangku.moe/favicon 代理不可用：返回 32x32 缩略图，解不出码
+# 解码本身纯离线：cv2.QRCodeDetector。
+
+CHALLENGE_WAIT_TIMEOUT = 300.0   # CF 挑战等待上限（秒），等用户人工过验证
+POLL_INTERVAL_MS = 3000
+
+
+def decode_qr_bytes(data: bytes) -> str:
+  if not data:
+    return ""
+  img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+  if img is None:
+    return ""
+  text, _, _ = cv2.QRCodeDetector().detectAndDecode(img)
+  return text or ""
+
+
+def challenge_like(resp) -> bool:
+  """图 URL 的响应像不像 CF 挑战/拦截页：403/503 且返回 HTML"""
+  if resp is None or resp.ok:
+    return False
+  ctype = (resp.headers or {}).get("content-type", "")
+  return resp.status in (403, 503) and ctype.startswith("text/html")
+
+
+async def fetch_image(page, url: str,
+                      challenge_timeout: float = CHALLENGE_WAIT_TIMEOUT) -> bytes:
+  """在浏览器页面里取图；遇 CF 挑战则等人工过验证后重试，超时抛异常"""
+  resp = await page.goto(url)
+  if resp is not None and resp.ok:
+    return await resp.body()
+  if not challenge_like(resp):
+    raise RuntimeError(f"image fetch failed: {resp.status if resp else 'no response'} {url}")
+
+  print(f">> 疑似 Cloudflare 挑战（{url}）：请在浏览器窗口完成人机验证，"
+        f"过后自动继续（最多等 {challenge_timeout:.0f}s）")
+  deadline = time.monotonic() + challenge_timeout
+  while time.monotonic() < deadline:
+    await page.wait_for_timeout(POLL_INTERVAL_MS)
+    resp = await page.goto(url)
+    if resp is not None and resp.ok:
+      return await resp.body()
+  raise RuntimeError(f"cloudflare challenge wait timeout: {url}")
