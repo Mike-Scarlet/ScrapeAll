@@ -5,7 +5,7 @@ import re
 from typing import Optional
 from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
 
 from scrape_all.sites.baidu_pan import locators
 from scrape_all.sites.baidu_pan.errors import BaiduPanError
@@ -39,11 +39,13 @@ def build_hash_url(base_url: str, internal_path: str, internal_parent: str) -> s
   return f"{base_url}#list/path={quote(internal_path, safe='')}&parentPath={quote(internal_parent, safe='')}"
 
 
-def breadcrumb_matches(crumb_path: str, target: str) -> bool:
-  """面包屑对长名字会截断（文本里带真实的 "..."），截断时退化为前缀比较"""
-  if crumb_path.endswith("..."):
-    return target.startswith(crumb_path[:-3])
-  return crumb_path == target
+def current_hash_path(page_url: str) -> Optional[str]:
+  """从页面 URL 里解出当前所在的内部路径（hash 的 list/path 参数，解码后）"""
+  if not page_url or "#list/path=" not in page_url:
+    return None
+  hash_part = page_url.split("#", 1)[1]
+  path_value = hash_part.split("list/path=", 1)[1].split("&", 1)[0]
+  return unquote(path_value)
 
 
 class BaiduPanEntry:
@@ -97,7 +99,9 @@ class SharedLinkPage:
         raise BaiduPanError("password error")
 
       logging.info(f"< get shared link: {shared_link_url} success")
-      return SharedLinkPage(page, shared_link_url.split("#")[0])
+      # share/init?surl= 之类的链接加载后会被规范化成 /s/xxx 形式，
+      # base 必须取加载后的真实 URL，否则每次 hash 跳转都变成整页重定向
+      return SharedLinkPage(page, page.url.split("#")[0])
 
     except BaiduPanError:
       if page is not None:
@@ -196,8 +200,30 @@ class SharedLinkPage:
       internal = prefix + path
       internal_parent = prefix + parent_of(path)
 
-    await self.page.goto(build_hash_url(self._base_url, internal, internal_parent))
-    await self._wait_current_path(path)
+    await self._goto_hash(internal, internal_parent)
+
+  async def _goto_hash(self, internal: str, internal_parent: str):
+    """hash 跳转并等待列表就绪
+
+    就绪信号是 /share/list 请求的 dir 参数等于目标路径（响应即证明目录正确，
+    面包屑不可靠：深层只显示最后一级，长名还会截断）
+    """
+    url = build_hash_url(self._base_url, internal, internal_parent)
+    if current_hash_path(self.page.url) == internal:
+      return
+
+    dir_param = "dir=" + quote(internal, safe="")
+    try:
+      async with self.page.expect_response(
+          lambda r: "/share/list" in r.url and dir_param in r.url,
+          timeout=10_000,
+      ):
+        await self.page.goto(url)
+    except PlaywrightTimeoutError:
+      logging.warning(f"no share/list response for {internal}, fall back to stable wait")
+
+    await WaitForBaidupanSharedLinkStable(self.page)
+    await self.page.wait_for_timeout(300)
 
   async def _ensure_share_prefix(self) -> str:
     if self._share_prefix:
@@ -218,21 +244,7 @@ class SharedLinkPage:
       raise BaiduPanError("cannot discover sharelink prefix from url")
 
     self._share_prefix = prefix
-    if await self.get_current_path() != "/":
-      await self.page.goto(build_hash_url(self._base_url, "/", "/"))
-      await self._wait_current_path("/")
     return prefix
-
-  async def _wait_current_path(self, path: str, timeout: float = 10.0):
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-      try:
-        if breadcrumb_matches(await self.get_current_path(), path):
-          return
-      except Exception:
-        pass
-      await asyncio.sleep(0.3)
-    raise BaiduPanError(f"goto path timeout: {path}")
 
   async def access_folder(self, folder_name: str):
     folder_locator = self.page.locator(locators.file_link(folder_name)).first

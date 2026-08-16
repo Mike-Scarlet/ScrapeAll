@@ -1,6 +1,6 @@
 
 from scrape_all.sites.baidu_pan.pages.shared_link_page import (
-  breadcrumb_matches, build_hash_url, extract_share_prefix, parent_of,
+  build_hash_url, current_hash_path, extract_share_prefix, parent_of,
 )
 
 
@@ -37,16 +37,14 @@ def test_parent_of():
   assert parent_of("/A/B/") == "/A"
 
 
-def test_breadcrumb_matches():
-  # 完整显示时精确比较
-  assert breadcrumb_matches("/", "/")
-  assert breadcrumb_matches("/[2025年10月] 魔法藥水救救我", "/[2025年10月] 魔法藥水救救我")
-  assert not breadcrumb_matches("/A", "/B")
-  # 根目录 "/" 不能前缀匹配任意目标（否则跳转前就会误判已到达）
-  assert not breadcrumb_matches("/", "/A/B")
-
-  # 长名字被面包屑截断（DOM 文本带真实的 "..."），退化为前缀比较
-  truncated = "/[2025年10月] ONE PUNCH MAN S3（一拳..."
-  target = "/[2025年10月] ONE PUNCH MAN S3（一拳超人S3）"
-  assert breadcrumb_matches(truncated, target)
-  assert not breadcrumb_matches(truncated, "/[2025年10月] SPY×FAMILY S3（間諜过家家S3）")
+def test_current_hash_path():
+  assert current_hash_path("https://pan.baidu.com/s/1x?pwd=ab#list/path=%2F") == "/"
+  assert current_hash_path("https://pan.baidu.com/s/1x?pwd=ab") is None
+  assert current_hash_path(None) is None
+  deep = ("https://pan.baidu.com/s/12UvUofV1eOoEA_bElixaDQ?pwd=yezi"
+          "#list/path=%2Fsharelink1102155816383-539367556653365%2FMimu%2F2025"
+          "&parentPath=%2Fsharelink1102155816383-539367556653365%2FMimu")
+  assert current_hash_path(deep) == "/sharelink1102155816383-539367556653365/Mimu/2025"
+  # hash 后带额外参数（如 &vmode=list）不影响解析
+  extra = "https://pan.baidu.com/s/1x#list/path=%2F&vmode=list"
+  assert current_hash_path(extra) == "/"
