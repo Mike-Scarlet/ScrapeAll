@@ -32,6 +32,15 @@ python scripts/verify_save_chain.py # 只读预检：转存链路全走一遍但
 python -m pytest scrape_all/tests   # 单测（纯逻辑，不需要浏览器）
 ```
 
+## 代码来源（重构前后对比）
+
+重构前旧代码约 520 行，现在 baidu_pan 包 + 测试 + 脚本约 1760 行，其中约 2/3 新写、1/3 复用：
+
+- 新写（~1150 行）：`tree.py` 遍历与停止策略、`save_plan.py` 转存计划、`save_executor.py` 执行编排、hash 深链导航（`goto_path` + URL 工具函数）、`list_files` 的 size/mtime 解析与同级同名检测、全部单测（495 行）、`walk_share.py` / `save_partial.py` / `verify_save_chain.py`
+- 复用旧功能（~560 行）：`SaveDialog`（弹窗树导航、新建文件夹、确认）、`SharedLinkPage` 的密码进入 / 列表解析 / 勾选交互、`login` / `predicates` / 选择器、`save_bangumi.py` 批量转存流程
+
+决策层（遍历、计划、执行、测试）全新，页面动作层沿用已验证的旧实现。
+
 ## 依赖
 
 ```
