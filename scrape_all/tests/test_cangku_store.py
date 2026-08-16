@@ -102,6 +102,19 @@ def test_mark_out_of_scope(tmp_path):
     assert store.pending_parse() == []                  # 不再进解析队列
 
 
+def test_mark_deferred(tmp_path):
+  with make_store(tmp_path) as store:
+    store.upsert_posts([PostRef("u1", "t1", "2026-08-10")])
+    store.mark_fetched("u1")
+    store.mark_deferred("u1")                            # 结构超规 -> 挂起（非失败）
+    item = get_item(store, "u1")
+    assert item.stat == Stat.DEFERRED and item.links_json == ""
+    assert store.pending_parse() == []                   # 不堵正常解析队列
+    assert {p.url for p in store.pending_parse(include_deferred=True)} == {"u1"}
+    store.save_parsed("u1", [])                          # 规则补全后重跑成功 -> 收编
+    assert get_item(store, "u1").stat == Stat.PARSED
+
+
 def test_history_done_flag(tmp_path):
   with make_store(tmp_path) as store:
     assert store.get_flag("yejiang:309550:history_done") is False

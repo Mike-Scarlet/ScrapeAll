@@ -42,9 +42,11 @@ def test_subcategory_alone_hits():
 
 
 def test_no_meta_labels():
+  # 严格入口：没挂分类也算工况外；例外帖走 CANGKU_FORCE_IDS 后门（parse 阶段按 id 放行）
   assert meta_labels(page("<div>没有分类</div>")) == []
   assert is_target_post(page("<div>没有分类</div>")) is False
   assert meta_labels("") == []
+  assert is_target_post("") is False
 
 
 # ---- 合集 box 解析（fixture 来自 219673 「合集预定区」实拍 DOM 裁剪）----

@@ -8,7 +8,9 @@ from bs4 import BeautifulSoup
 from scrape_all.sites.cangku import locators
 
 # 纯逻辑模块：帖子页解析。
-# 第一步 分类过滤：meta-label（分类链）出现「动画」二字才工况内，其余 OUT_OF_SCOPE。
+# 第一步 分类过滤（严格）：meta-label（分类链）出现「动画」二字才工况内，
+#   否则 OUT_OF_SCOPE——包括一条分类都没挂的帖子。
+# 个别想要的例外走 config.CANGKU_FORCE_IDS 后门（parse 阶段按 id 放行）。
 # 第二步 合集 box 解析（第一种情况，qr-image-link）：折叠卡标题含「合集」的 dl-box——
 #   dl-meta 的 info 里写 提取码/解压密码；dl-item 的 icon 样式里 favicon?url= 包着
 #   二维码原图地址（url 解码后可直接下载），二维码内容即真实网盘链接（见 qr.py）。
@@ -30,7 +32,8 @@ def meta_labels(html: str) -> list[str]:
 
 
 def is_target_post(html: str) -> bool:
-  """工况内判定：任一分类 meta-label 文本包含「动画」"""
+  """严格工况内判定：任一分类 meta-label 文本包含「动画」。
+  没挂标签 / 挂了别的分类都算工况外；例外帖子走 CANGKU_FORCE_IDS 后门"""
   return any(TARGET_CATEGORY in label for label in meta_labels(html))
 
 

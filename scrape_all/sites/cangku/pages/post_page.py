@@ -41,12 +41,14 @@ def save_qr_image(name: str, data: bytes):
 
 
 class PostPage:
-  """帖子页浏览器封装：打开并等顶部 meta 渲染，返回整页 HTML"""
+  """帖子页浏览器封装：打开并等帖子主体渲染，返回整页 HTML"""
 
   def __init__(self, page):
     self.page = page
 
   async def fetch_html(self, url: str) -> str:
     await self.page.goto(url)
-    await self.page.wait_for_selector(locators.META_LABEL, timeout=15000)
+    # 就绪检查等 article 而不是分类 meta-label：个别帖没挂任何分类
+    # （225885/226386，分类链为空但帖子/下载区正常），等 label 会永远超时
+    await self.page.wait_for_selector(locators.ARTICLE, timeout=15000)
     return await self.page.content()

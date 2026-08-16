@@ -7,6 +7,11 @@ BAIDU_PAN_PROXY_SERVER = None
 YEJIANG_USER_ID = "309550"
 YEJIANG_HISTORY_CUTOFF = "2025-12-01"   # 历史抓取下界（含该时刻）
 YEJIANG_PAGE_LIMIT = 100                # 翻页安全上限（正常应先触发时间/空页停止）
+# 分类黑名单后门：入口严格（meta-label 无「动画」一律工况外，包括没挂标签的），
+# 个别想要的帖按 id 写在这里，parse 跳过分类检查直接走结构解析
+CANGKU_FORCE_IDS = (
+    "225885",   # 作者漏挂分类，但帖子/下载区正常，人工确认要
+)
 
 # baidu pan save
 BAIDU_SAVE_TARGET_PATH = "/bangumi/2510"

@@ -12,6 +12,7 @@ class PostItem:
     2 = parsed      已解析（工况内，links 已写入）
     3 = consumed    解析结果已交后续流程处理（终态）
     4 = out_of_scope 解析过滤判定工况外（meta-label 无「动画」；终态）
+    5 = deferred    解析跑过但结构超规（如无合集卡）：挂起，规则补全后重试
     -1 = fetch 失败   -2 = parse 失败
   """
   url: str = Field(primary_key=True)

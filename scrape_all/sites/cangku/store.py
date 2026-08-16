@@ -19,6 +19,8 @@ class Stat(IntEnum):
   PARSED = 2        # 已解析（工况内，links 已写入）
   CONSUMED = 3      # 解析结果已交后续流程处理（终态）
   OUT_OF_SCOPE = 4  # 解析第一步过滤判定工况外（meta-label 无「动画」；终态）
+  DEFERRED = 5      # 解析跑过但结构超出当前规则（如无合集卡）：挂起非失败，
+                    # 规则补全后 --retry-deferred 重跑收编
   FETCH_FAILED = -1
   PARSE_FAILED = -2
 
@@ -104,9 +106,12 @@ class PostStore:
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 
-  def pending_parse(self) -> list[PostItem]:
-    """待解析的帖子（FETCHED，页面已存本地，可离线重试）"""
-    return self.db.QueryRecords(PostItem, where="stat = ?", params=(int(Stat.FETCHED),))
+  def pending_parse(self, include_deferred: bool = False) -> list[PostItem]:
+    """待解析的帖子（FETCHED，页面已存本地，可离线重试）；
+    include_deferred 连挂起帖（DEFERRED，规则补全后的重试跑）一起取"""
+    stats = [int(Stat.FETCHED)] + ([int(Stat.DEFERRED)] if include_deferred else [])
+    marks = ",".join("?" for _ in stats)
+    return self.db.QueryRecords(PostItem, where=f"stat in ({marks})", params=tuple(stats))
 
   def save_parsed(self, url: str, links: list, stat: int = int(Stat.PARSED)):
     """parse 阶段写入解析结果；links 为链接记录的 dict 列表"""
@@ -118,6 +123,12 @@ class PostStore:
 
   def mark_parse_failed(self, url: str):
     item = PostItem(url=url, stat=int(Stat.PARSE_FAILED))
+    self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
+
+  def mark_deferred(self, url: str):
+    """解析结构超出当前规则：挂起（非失败），规则补全后 --retry-deferred 重跑"""
+    item = PostItem(url=url, stat=int(Stat.DEFERRED))
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 

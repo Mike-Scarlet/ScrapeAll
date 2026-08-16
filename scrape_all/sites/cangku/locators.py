@@ -5,6 +5,7 @@ USER_POST_CONTAINER = "#user-post"
 CARD_TITLE = ".title"
 
 # post page
+ARTICLE = 'article.article'   # 帖子主体容器；个别帖没挂任何分类标签，就绪检查用这个
 META_LABEL = '[class="meta-label"]'
 COLLAPSE_CARD = '[class="collapse-card"]'
 COLLAPSE_BTN = '.collapse-btn'
