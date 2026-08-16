@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 
 from playwright.async_api import async_playwright
-from scrape_all.browser.context import GetWrapPlaywrightBrowserContext, ProxySettings
+from scrape_all.browser.session import BrowserSession
 from scrape_all.sites.baidu_pan.login import BaiduPanLogin
 from scrape_all.sites.baidu_pan.shared_link import BaiduPanSharedLink
 from scrape_all.sites.baidu_pan.saver import SharedLinkSaver
@@ -19,14 +19,11 @@ from config import BAIDU_PAN_PROXY_SERVER, BAIDU_SAVE_TARGET_PATH, BANGUMI_LINKS
 
 
 async def main():
-  async with async_playwright() as p:
-    proxy_setting = ProxySettings(server=BAIDU_PAN_PROXY_SERVER) if BAIDU_PAN_PROXY_SERVER else None
-    context = await GetWrapPlaywrightBrowserContext(p, proxy_setting)
-
-    # await BaiduPanLogin.GuaranteeBaiduPanLogin(context)
+  async with BrowserSession(BAIDU_PAN_PROXY_SERVER) as session:
+    # await BaiduPanLogin.GuaranteeBaiduPanLogin(session.context)
 
     for link in BANGUMI_LINKS:
-        shared_link_page = await BaiduPanSharedLink.GetSharedLink(context, link)
+        shared_link_page = await BaiduPanSharedLink.GetSharedLink(session.context, link)
 
         saver = SharedLinkSaver(shared_link_page)
         await saver.open_save_dialog()
@@ -37,7 +34,5 @@ async def main():
         print(f"save result: {save_result}")
         print("done")
     input()
-
-    await context.close()
 
 asyncio.run(main())
