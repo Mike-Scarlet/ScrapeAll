@@ -26,6 +26,9 @@ archive/       历史实验脚本
 python scripts/scrape_yejiang.py    # 抓取仓库站用户帖子
 python scripts/save_bangumi.py      # 批量转存 config.py 里的分享链接
 python scripts/walk_share.py        # 只读遍历分享目录树（WALK_LINKS），打印树
+python scripts/save_partial.py --dry-run   # 只读：遍历 + 打印部分转存计划
+python scripts/save_partial.py      # 遍历 + 打印计划 + 输入 yes 确认后执行转存
+python scripts/verify_save_chain.py # 只读预检：转存链路全走一遍但不点确认不建目录
 python -m pytest scrape_all/tests   # 单测（纯逻辑，不需要浏览器）
 ```
 

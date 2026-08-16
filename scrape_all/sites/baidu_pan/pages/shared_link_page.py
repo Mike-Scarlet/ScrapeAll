@@ -48,6 +48,20 @@ def current_hash_path(page_url: str) -> Optional[str]:
   return unquote(path_value)
 
 
+def hash_path_matches(page_url: str, path: str) -> bool:
+  """页面当前是否已停在分享内的 path（比较 URL hash，剥掉 sharelink 前缀）
+
+  不能用面包屑做这个判断：深度 >= 2 只显示最后一级，
+  停在 /Mimu/2025 时面包屑读出 "/2025"，goto_path("/2025") 会提前返回列错目录
+  """
+  current = current_hash_path(page_url)
+  if current is None:
+    return path == "/"          # 没有 hash = 刚打开的分享页，停在根
+  prefix = extract_share_prefix(current)
+  rel = current[len(prefix):] if prefix else current
+  return rel == path
+
+
 class BaiduPanEntry:
   def __init__(self):
     self.name = None
@@ -121,25 +135,6 @@ class SharedLinkPage:
   async def IsInSharedLinkPage(page: Page) -> bool:
     return locators.SITE_NAME in await page.title()
 
-  async def get_current_path(self) -> str:
-    if not await SharedLinkPage.IsInSharedLinkPage(self.page):
-      raise BaiduPanError("not in shared link page")
-
-    await WaitForBaidupanSharedLinkStable(self.page)
-
-    path_holder_element = self.page.locator(locators.BREADCRUMB_HOLDER).first
-    style_value = await path_holder_element.get_attribute("style")
-    if style_value and "none" in style_value:
-      return "/"   # root path
-
-    full_path_element = self.page.locator(locators.BREADCRUMB_FULL_PATH).first
-    path_text = await full_path_element.text_content()
-    if path_text:
-      path_text = path_text.replace(">", "/")
-      return path_text.removeprefix("全部文件")
-
-    return "/"
-
   async def list_files(self) -> list[BaiduPanEntry]:
     if not await SharedLinkPage.IsInSharedLinkPage(self.page):
       raise BaiduPanError("not in shared link page")
@@ -190,7 +185,7 @@ class SharedLinkPage:
       raise BaiduPanError("goto_path needs base_url, open page via SharedLinkPage.open")
 
     path = "/" + path.strip("/") if path.strip("/") else "/"
-    if await self.get_current_path() == path:
+    if hash_path_matches(self.page.url, path):
       return
 
     if path == "/":

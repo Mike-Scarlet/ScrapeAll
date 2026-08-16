@@ -103,3 +103,5 @@ def test_format_plan_output():
   )
   text = format_plan(ops)
   assert "[1]" in text and "/Season 1" in text and "+ 01.mp4" in text
+  # 每个条目要能看到最终落盘路径
+  assert "=>  /bangumi/Season 1/01.mp4" in text

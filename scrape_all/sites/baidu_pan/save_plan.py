@@ -64,12 +64,16 @@ def flat_to(base: str) -> TargetFor:
 
 
 def format_plan(ops: List[SaveOp]) -> str:
-  """计划的可读文本形式，执行前打印给人工核对（dry-run）"""
+  """计划的可读文本形式，执行前打印给人工核对（dry-run）
+
+  每个条目同时给出最终落盘路径，来源与目标一目了然
+  """
   if not ops:
     return "(empty plan)"
   lines: List[str] = []
   for i, op in enumerate(ops, 1):
     lines.append(f"[{i}] {op.source_dir}  ->  {op.target_dir}")
     for name in op.names:
-      lines.append(f"      + {name}")
+      landing = op.target_dir.rstrip("/") + "/" + name
+      lines.append(f"      + {name}  =>  {landing}")
   return "\n".join(lines)

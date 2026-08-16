@@ -1,6 +1,6 @@
 
 from scrape_all.sites.baidu_pan.pages.shared_link_page import (
-  build_hash_url, current_hash_path, extract_share_prefix, parent_of,
+  build_hash_url, current_hash_path, extract_share_prefix, hash_path_matches, parent_of,
 )
 
 
@@ -48,3 +48,20 @@ def test_current_hash_path():
   # hash 后带额外参数（如 &vmode=list）不影响解析
   extra = "https://pan.baidu.com/s/1x#list/path=%2F&vmode=list"
   assert current_hash_path(extra) == "/"
+
+
+def test_hash_path_matches():
+  # 没有 hash = 刚打开的分享页，停在根
+  fresh = "https://pan.baidu.com/s/12UvUofV1eOoEA_bElixaDQ?pwd=yezi"
+  assert hash_path_matches(fresh, "/")
+  assert not hash_path_matches(fresh, "/Mimu")
+
+  at_root = "https://pan.baidu.com/s/1x#list/path=%2F&parentPath=%2F"
+  assert hash_path_matches(at_root, "/")
+
+  deep = ("https://pan.baidu.com/s/1x?pwd=yezi"
+          "#list/path=%2Fsharelink1102155816383-539367556653365%2FMimu%2F2025")
+  assert hash_path_matches(deep, "/Mimu/2025")
+  # 面包屑雷：停在 /Mimu/2025 时不能误判已在顶层 /2025
+  assert not hash_path_matches(deep, "/2025")
+  assert not hash_path_matches(deep, "/")
