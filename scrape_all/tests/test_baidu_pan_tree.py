@@ -2,7 +2,7 @@
 import asyncio
 
 from scrape_all.sites.baidu_pan.tree import (
-  WalkAction, chain, max_depth, skip, stop_folder, stop_when_child, walk_tree, format_tree,
+  WalkAction, chain, max_depth, skip, stop_folder, stop_below, stop_when_child, walk_tree, format_tree,
 )
 from scrape_all.tests.fake_share import FAKE_TREE, make_fake_lister
 
@@ -93,6 +93,29 @@ def test_skip_removes_folder_without_visiting():
   s2 = find(root, "/Season 2")
   assert [c.name for c in s2.children] == ["21.mp4", "empty"]
   assert "/Season 2/extra" not in calls
+
+
+def test_stop_below_expands_one_level():
+  # stop_below("Season*")：Season 目录展开一级，其子文件夹（extra/empty）作为整体单元
+  lister, calls = make_fake_lister()
+  root = run(walk_tree(lister, policy=stop_below("Season*")))
+
+  assert find(root, "/Season 1").children is not None       # 匹配目录本身被展开
+  assert find(root, "/Season 2").children is not None
+  assert find(root, "/Season 2/21.mp4").is_dir is False     # 展开层里的文件可见
+  assert find(root, "/Season 2/extra").children is None     # 其子文件夹未展开
+  assert "/Season 2/extra" not in calls                     # 进入前探测即停，没进 extra
+  assert find(root, "/Season 2/empty").children is None
+
+
+def test_stop_below_ignores_root_level():
+  # 根下第一层的目录没有可匹配的父目录名，不受 stop_below 影响
+  lister, calls = make_fake_lister()
+  root = run(walk_tree(lister, policy=stop_below("Season*")))
+
+  # "/Season 1" 的父是根，不会被 stop_below 停住；它下面的文件照常列出
+  assert find(root, "/Season 1/01.mp4").is_dir is False
+  assert "/Season 1" in calls
 
 
 def test_chain_first_non_none_wins():

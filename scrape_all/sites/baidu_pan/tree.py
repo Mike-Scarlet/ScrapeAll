@@ -86,6 +86,20 @@ def stop_folder(*patterns) -> StopPolicy:
   return policy
 
 
+def stop_below(*patterns) -> StopPolicy:
+  """名字匹配(glob)的文件夹只展开一级：进入并列出内容，但其子文件夹作为整体单元（stop_folder 下移一层）"""
+  def policy(ctx: FolderCtx) -> Optional[WalkAction]:
+    path = ctx.path.rstrip("/")
+    cut = path.rfind("/")
+    if cut <= 0:
+      return None                       # 根或根下第一层，没有可匹配的父目录名
+    parent_name = path[:cut].rsplit("/", 1)[-1]
+    if _match_any(parent_name, patterns):
+      return WalkAction.STOP
+    return None
+  return policy
+
+
 def stop_when_child(*patterns) -> StopPolicy:
   """当前层的子文件夹里出现名字匹配(glob)时，本层即终点：不再进入任何子文件夹"""
   def policy(ctx: FolderCtx) -> Optional[WalkAction]:

@@ -34,5 +34,10 @@ BANGUMI_LINKS = [
     "https://pan.baidu.com/s/1MMzTYMTuF_dR5xASoZEN6A?pwd=am99",
 ]
 
+TEST_LINKS = [
+    "https://pan.baidu.com/share/init?surl=2UvUofV1eOoEA_bElixaDQ&pwd=yezi"
+]
+
 # baidu pan walk (read-only listing, scripts/walk_share.py)
-WALK_LINKS = BANGUMI_LINKS[:3]
+# WALK_LINKS = BANGUMI_LINKS[:3]
+WALK_LINKS = TEST_LINKS
