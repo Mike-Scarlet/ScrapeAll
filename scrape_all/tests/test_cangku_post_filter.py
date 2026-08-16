@@ -1,6 +1,7 @@
 
 from scrape_all.sites.cangku.post_filter import (
-  DlItem, is_target_post, meta_labels, parse_collection_boxes, parse_info,
+  DlBox, DlItem, baidu_qr_urls, classify_link, extract_links, is_baidu_item,
+  is_target_post, meta_labels, parse_collection_boxes, parse_info,
 )
 
 # 219673 帖子页顶部 meta 实拍结构（用户提供的 DOM 裁剪）
@@ -127,3 +128,110 @@ def test_parse_info_variants():
   assert parse_info("密码：xy") == ("", "xy")
   assert parse_info("") == ("", "")
   assert parse_info("提取：xxx") == ("xxx", "")
+
+
+# ---- extract_links：decode 回调注入，纯逻辑 ----
+
+def box_of(title="ZHAO", extract="yezi", unzip="yejiang", items=None):
+  return DlBox(card_title="合集预定区", title=title, date="-", source="自整理",
+               info="x", extract_pwd=extract, unzip_pwd=unzip, items=items or [])
+
+
+def test_extract_links_all_good():
+  boxes = [box_of(items=[DlItem(name="百度网盘", qr_image_url="qr1")])]
+  decode = {"qr1": "https://pan.baidu.com/s/1abc"}.get
+  r = extract_links(boxes, decode)
+  assert r.anomalies == []
+  assert r.links == [{
+      "name": "百度网盘", "url": "https://pan.baidu.com/s/1abc",
+      "pwd": "yezi", "unzip_pwd": "yejiang", "pan_type": "baidu",
+      "box_title": "ZHAO", "card_title": "合集预定区", "source": "自整理", "date": "-"}]
+
+
+def test_extract_links_anomaly_paths():
+  # 没有任何合集卡
+  r = extract_links([], lambda u: "")
+  assert r.links == [] and len(r.anomalies) == 1
+  # box 无下载项 / 百度项无二维码 / 解码失败 / 内容非网盘 —— 各记一条，整帖不产出
+  boxes = [
+      box_of(title="空盒", items=[]),
+      box_of(title="B", items=[
+          DlItem(name="百度网盘", qr_image_url=""),
+          DlItem(name="百度网盘", qr_image_url="qr-bad"),
+          DlItem(name="百度网盘", qr_image_url="qr-other"),
+      ]),
+  ]
+  decode = {"qr-bad": "", "qr-other": "https://example.com/x"}.get
+  r = extract_links(boxes, decode)
+  assert r.links == [] and len(r.anomalies) == 4
+
+
+def test_extract_links_only_baidu_items():
+  # 219421 形态：同盒 百度网盘(二维码图) + Pikpak(直链)——只产出百度项，
+  # Pikpak 项不取图不记异常（decode 表里没有它的地址也不影响）
+  boxes = [box_of(title="見ず水煮", items=[
+      DlItem(name="百度网盘", qr_image_url="zhu.webp"),
+      DlItem(name="Pikpak", qr_image_url="https://mypikpak.com/s/xxx"),
+  ])]
+  decode = {"zhu.webp": "https://pan.baidu.com/s/1abc"}.get
+  r = extract_links(boxes, decode)
+  assert r.anomalies == []
+  assert [l["name"] for l in r.links] == ["百度网盘"]
+  assert r.links[0]["box_title"] == "見ず水煮"
+
+
+def test_extract_links_direct_pan_link():
+  # 217547 形态：百度项地址本身即盘链，不解二维码直接采用；decode 不应被调到
+  boxes = [box_of(title="セネト", items=[
+      DlItem(name="百度网盘", qr_image_url="https://pan.baidu.com/s/1BrupIT7"),
+      DlItem(name="百度网盘(二维码)", qr_image_url="https://pan.baidu.com/share/init?surl=cpjR"),
+  ])]
+  def boom(u):
+    raise AssertionError("直链不应走解码")
+  r = extract_links(boxes, boom)
+  assert r.anomalies == []
+  assert [l["url"] for l in r.links] == [
+      "https://pan.baidu.com/s/1BrupIT7", "https://pan.baidu.com/share/init?surl=cpjR"]
+  assert all(l["pan_type"] == "baidu" for l in r.links)
+
+
+def test_extract_links_box_without_baidu_item():
+  # 整盒只有其他平台项 -> 记异常保持待解析（不是静默丢掉）
+  boxes = [box_of(title="topu", items=[DlItem(name="Pikpak", qr_image_url="p")])]
+  r = extract_links(boxes, lambda u: "https://pan.baidu.com/s/1x")
+  assert r.links == [] and len(r.anomalies) == 1
+  assert "Pikpak" in r.anomalies[0]
+
+
+def test_extract_links_pan_type_from_qr_content():
+  # pan_type 看二维码内容不看按钮名：百度项解出夸克链仍是 quark
+  boxes = [box_of(items=[DlItem(name="百度网盘", qr_image_url="q")])]
+  r = extract_links(boxes, {"q": "https://pan.quark.cn/s/x"}.get)
+  assert [l["pan_type"] for l in r.links] == ["quark"]
+
+
+def test_baidu_item_name_match():
+  # 「百度」二字即可：百度网盘(二维码) 也命中；Pikpak/磁力 不命中
+  assert is_baidu_item(DlItem(name="百度网盘"))
+  assert is_baidu_item(DlItem(name="百度网盘(二维码)"))
+  assert not is_baidu_item(DlItem(name="Pikpak"))
+  assert not is_baidu_item(DlItem(name="磁力"))
+
+
+def test_baidu_qr_urls_only_baidu_items():
+  boxes = [box_of(items=[
+      DlItem(name="百度网盘", qr_image_url="b1"),
+      DlItem(name="Pikpak", qr_image_url="p1"),
+      DlItem(name="百度网盘(二维码)", qr_image_url="b1"),        # 重复地址去重
+      DlItem(name="百度网盘", qr_image_url=""),                  # 无地址不计
+      DlItem(name="百度网盘", qr_image_url="https://pan.baidu.com/s/1x"),  # 直链不取图
+  ])]
+  assert baidu_qr_urls(boxes) == ["b1"]
+
+
+def test_classify_link():
+  assert classify_link("https://pan.baidu.com/s/1x") == "baidu"
+  assert classify_link("https://pan.quark.cn/s/x") == "quark"
+  assert classify_link("https://www.alipan.com/s/x") == "aliyun"
+  assert classify_link("magnet:?xt=urn:btih:abc") == "magnet"
+  assert classify_link("https://example.com/f") == "other"

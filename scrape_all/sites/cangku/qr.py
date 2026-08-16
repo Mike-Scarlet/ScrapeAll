@@ -17,13 +17,26 @@ POLL_INTERVAL_MS = 3000
 
 
 def decode_qr_bytes(data: bytes) -> str:
+  """cv2 解码，带兜底链：原图 -> OTSU 二值化 -> 2x/3x 放大。
+  站点二维码 300x300，个别对比度低/带压缩噪声，直接解会漏（224627 等实测）。"""
   if not data:
     return ""
   img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
   if img is None:
     return ""
-  text, _, _ = cv2.QRCodeDetector().detectAndDecode(img)
-  return text or ""
+  det = cv2.QRCodeDetector()
+  text, _, _ = det.detectAndDecode(img)
+  if text:
+    return text
+  gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+  _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+  for candidate in (otsu,
+                    cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC),
+                    cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)):
+    text, _, _ = det.detectAndDecode(candidate)
+    if text:
+      return text
+  return ""
 
 
 def challenge_like(resp) -> bool:

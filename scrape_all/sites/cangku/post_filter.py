@@ -13,9 +13,14 @@ from scrape_all.sites.cangku import locators
 #   dl-meta 的 info 里写 提取码/解压密码；dl-item 的 icon 样式里 favicon?url= 包着
 #   二维码原图地址（url 解码后可直接下载），二维码内容即真实网盘链接（见 qr.py）。
 # 折叠卡不用真的点开：Vue 只是视觉折叠，DOM 全量渲染（219673 验证）。
+# box 内可能同时放多个平台的下载项（219421：百度网盘 + Pikpak）：只取名字带
+#   「百度」二字的项，其余平台项跳过，不取图不记异常。
+# 项地址也可能直接就是盘链（217547：pan.baidu.com/s/1xxx、share/init?surl=xxx）：
+#   没有二维码可解，地址本身即链接。
 
 TARGET_CATEGORY = "动画"
 COLLECTION_KEYWORD = "合集"
+BAIDU_ITEM_KEYWORD = "百度"   # 放宽匹配：百度网盘 / 百度网盘(二维码) 等写法都命中
 
 
 def meta_labels(html: str) -> list[str]:
@@ -105,3 +110,92 @@ def parse_collection_boxes(html: str) -> list[DlBox]:
         box.items.append(DlItem(name=a_el.get_text(strip=True), qr_image_url=item_qr_url(a_el)))
       boxes.append(box)
   return boxes
+
+
+# ---- 合集 box -> 链接清单（parse 阶段用，decode 回调注入保持纯逻辑）----
+
+BAIDU_RE = re.compile(r"pan\.baidu\.com", re.I)
+QUARK_RE = re.compile(r"pan\.quark\.cn", re.I)
+ALIYUN_RE = re.compile(r"(aliyundrive|alipan)", re.I)
+
+
+def classify_link(url: str) -> str:
+  if url.startswith("magnet:"):
+    return "magnet"
+  if BAIDU_RE.search(url):
+    return "baidu"
+  if QUARK_RE.search(url):
+    return "quark"
+  if ALIYUN_RE.search(url):
+    return "aliyun"
+  return "other"
+
+
+def direct_pan_link(url: str) -> str:
+  """项地址本身就是网盘链接（pan.baidu.com/s/1xxx、share/init?surl=xxx，
+  217547 形态）时原样返回——不再解二维码，地址即链接；否则空串（走二维码）"""
+  return url if classify_link(url) != "other" else ""
+
+
+@dataclass
+class PostLinks:
+  links: list = field(default_factory=list)      # list[dict]，落 links_json
+  anomalies: list = field(default_factory=list)  # 不符合当前规则的结构描述
+
+
+def is_baidu_item(item: DlItem) -> bool:
+  """下载项筛选：名字带「百度」二字即可（百度网盘 / 百度网盘(二维码) 等）"""
+  return BAIDU_ITEM_KEYWORD in item.name
+
+
+def baidu_qr_urls(boxes: list) -> list[str]:
+  """合集 box 里需要取图解码的地址（parse 阶段浏览器取图清单）。
+  项地址本身已是盘链的排除在外——没有二维码可取。"""
+  return sorted({it.qr_image_url for b in boxes for it in b.items
+                 if is_baidu_item(it) and it.qr_image_url
+                 and not direct_pan_link(it.qr_image_url)})
+
+
+def extract_links(boxes: list, decode) -> PostLinks:
+  """合集 box 列表 -> (链接清单, 异常描述)。decode(二维码图地址) -> 盘链，
+  解不出给空串（由调用方的浏览器取图 + cv2 解码实现）。
+  box 内只取名字带「百度」的项，其他平台项（Pikpak 等）跳过；整个 box
+  没有百度项才算异常。项地址本身已是盘链时直接采用、不调 decode（217547）。
+  出现任何不符合当前规则的结构都记 anomaly 且整帖不产出链接
+  （帖子保持待解析，等规则补全后重跑）。"""
+  result = PostLinks()
+  if not boxes:
+    result.anomalies.append("工况内但没有任何「合集」折叠卡")
+    return result
+  for box in boxes:
+    if not box.items:
+      result.anomalies.append(f"box {box.title!r} 没有任何下载项")
+      continue
+    baidu_items = [it for it in box.items if is_baidu_item(it)]
+    if not baidu_items:
+      names = "/".join(it.name for it in box.items)
+      result.anomalies.append(f"box {box.title!r} 没有「百度」下载项（只有 {names}）")
+      continue
+    for item in baidu_items:
+      if not item.qr_image_url:
+        result.anomalies.append(f"box {box.title!r} 项 {item.name!r} 无二维码地址")
+        continue
+      url = direct_pan_link(item.qr_image_url)
+      if not url:
+        url = decode(item.qr_image_url)
+        if not url:
+          result.anomalies.append(
+              f"box {box.title!r} 项 {item.name!r} 二维码取图/解码失败 {item.qr_image_url}")
+          continue
+      pan_type = classify_link(url)
+      if pan_type == "other":
+        result.anomalies.append(
+            f"box {box.title!r} 项 {item.name!r} 二维码内容非网盘链接: {url[:80]}")
+        continue
+      result.links.append({
+          "name": item.name, "url": url,
+          "pwd": box.extract_pwd, "unzip_pwd": box.unzip_pwd, "pan_type": pan_type,
+          "box_title": box.title, "card_title": box.card_title,
+          "source": box.source, "date": box.date,
+      })
+  return result

@@ -1,51 +1,52 @@
 
-import re
-from playwright.async_api import Locator, Page
+import os
 
 from scrape_all.sites.cangku import locators
 
-class DLBoxContent:
-  def __init__(self):
-    self.meta_dict = {}
-    self.download_links = {}
+# 帖子页抓取（fetch 阶段）与本地落盘位置。
+# HTML 落 data/cangku/posts/{id}.html，二维码图落 data/cangku/qr/，
+# parse 阶段纯离线读这些文件（只有取二维码图要走浏览器）。
 
-  async def ParseFromLocator(self, element: Locator):
-    for meta_element in await element.locator(locators.DL_META_ITEM).all():
-      key = await meta_element.locator('span').first.get_attribute('class')
-      value = await meta_element.text_content()
-      self.meta_dict[key] = value.strip()
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+DATA_DIR = os.path.join(_project_root, "data", "cangku")
+POSTS_DIR = os.path.join(DATA_DIR, "posts")
+QR_DIR = os.path.join(DATA_DIR, "qr")
 
-    dl_link_locator = element.locator(locators.DL_LINK_LIST)
-    for dl_element in await dl_link_locator.locator(locators.DL_ITEM).all():
-      dl_name = await dl_element.text_content()
-      on_click_str = await dl_element.get_attribute("onclick")
-      find_result = re.findall(r"\('[^']+', '[^']+', '([^']+)'\)", on_click_str)
-      if find_result:
-        self.download_links[dl_name] = find_result[0]
+
+def post_id(url: str) -> str:
+  """/archives/219673 -> 219673"""
+  return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def post_html_path(pid: str) -> str:
+  return os.path.join(POSTS_DIR, f"{pid}.html")
+
+
+def save_post_html(pid: str, html: str):
+  os.makedirs(POSTS_DIR, exist_ok=True)
+  with open(post_html_path(pid), "w", encoding="utf-8") as f:
+    f.write(html)
+
+
+def load_post_html(pid: str) -> str:
+  with open(post_html_path(pid), "r", encoding="utf-8") as f:
+    return f.read()
+
+
+def save_qr_image(name: str, data: bytes):
+  os.makedirs(QR_DIR, exist_ok=True)
+  with open(os.path.join(QR_DIR, name), "wb") as f:
+    f.write(data)
+
 
 class PostPage:
-  def __init__(self, page: Page):
+  """帖子页浏览器封装：打开并等顶部 meta 渲染，返回整页 HTML"""
+
+  def __init__(self, page):
     self.page = page
 
-  async def get_labels(self) -> list[str]:
-    labels = []
-    for label_element in await self.page.locator(locators.META_LABEL).all():
-      labels.append(await label_element.text_content())
-    return labels
-
-  async def has_collapse_card(self) -> bool:
-    return await self.page.locator(locators.COLLAPSE_CARD).count() > 0
-
-  async def parse_collection_dl_boxes(self) -> list[DLBoxContent]:
-    dl_box_contents = []
-    for collapse_card in await self.page.locator(locators.COLLAPSE_CARD).all():
-      collapse_card_text = await collapse_card.locator(locators.COLLAPSE_BTN).first.text_content()
-      if "合集" not in collapse_card_text:
-        continue
-
-      # parse download box
-      for dl_box_element in await collapse_card.locator(locators.DL_BOX).all():
-        dl_box_content = DLBoxContent()
-        await dl_box_content.ParseFromLocator(dl_box_element)
-        dl_box_contents.append(dl_box_content)
-    return dl_box_contents
+  async def fetch_html(self, url: str) -> str:
+    await self.page.goto(url)
+    await self.page.wait_for_selector(locators.META_LABEL, timeout=15000)
+    return await self.page.content()

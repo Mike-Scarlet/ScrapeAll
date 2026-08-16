@@ -18,7 +18,7 @@ class PostItem:
   title: str = Field(not_null=True)
   post_time: str = Field(not_null=True)     # 时间戳归一化为 UTC ISO 文本，解析不了存原文
   stat: int = Field(not_null=True, default=0)
-  links_json: str = Field(not_null=True, default="")   # 筛选后链接清单 json：[{name, url, pwd, pan_type}]
+  links_json: str = Field(not_null=True, default="")   # 解析后链接清单 json：[{name, url, pwd, unzip_pwd, pan_type, box_title, card_title, source, date}]
   first_seen: float = Field(not_null=True)
   last_seen: float = Field(not_null=True)
 

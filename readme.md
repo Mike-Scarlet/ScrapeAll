@@ -26,6 +26,8 @@ archive/       历史实验脚本
 python scripts/probe_cangku.py     # cangku 解析探针：分类过滤 + 合集 box 解析，浏览器取二维码解码出网盘链接
 python scripts/pass_cdn_challenge.py # 手动过图床 Cloudflare 挑战（cf_clearance 存持久 profile，按域名各过一次）
 python scripts/scrape_yejiang.py    # cangku collect：翻用户帖子列表到 cutoff/已覆盖边界，新帖/更新帖落库（增量安全）
+python scripts/fetch_posts.py       # cangku fetch：待抓帖子页逐帖存 HTML 到本地（stat 0 -> 1/-1）
+python scripts/parse_posts.py       # cangku parse：本地 HTML -> 工况外/链接落库（stat 1 -> 4/2，异常保持 1 重跑收编）
 python scripts/save_bangumi.py      # 批量转存 config.py 里的分享链接
 python scripts/walk_share.py        # 只读遍历分享目录树（WALK_LINKS），打印树
 python scripts/save_partial.py --dry-run   # 只读：遍历 + 打印部分转存计划

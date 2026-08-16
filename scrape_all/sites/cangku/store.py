@@ -97,34 +97,40 @@ class PostStore:
   def mark_fetched(self, url: str):
     item = PostItem(url=url, stat=int(Stat.FETCHED))
     self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
 
   def mark_fetch_failed(self, url: str):
     item = PostItem(url=url, stat=int(Stat.FETCH_FAILED))
     self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
 
   def pending_parse(self) -> list[PostItem]:
     """待解析的帖子（FETCHED，页面已存本地，可离线重试）"""
     return self.db.QueryRecords(PostItem, where="stat = ?", params=(int(Stat.FETCHED),))
 
   def save_parsed(self, url: str, links: list, stat: int = int(Stat.PARSED)):
-    """parse 阶段写入筛选结果；links 为链接记录的 dict 列表（格式随解析规则定）"""
+    """parse 阶段写入解析结果；links 为链接记录的 dict 列表"""
     item = PostItem(url=url)
     item.links_json = json.dumps(links, ensure_ascii=False)
     item.stat = stat
     self.db.RecordFieldChanged(item, ["links_json", "stat"])
+    self.db.Commit()
 
   def mark_parse_failed(self, url: str):
     item = PostItem(url=url, stat=int(Stat.PARSE_FAILED))
     self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
 
   def mark_out_of_scope(self, url: str):
     """过滤判定工况外（分类 meta-label 无「动画」），直接终态，links 留空"""
     item = PostItem(url=url, stat=int(Stat.OUT_OF_SCOPE))
     self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
 
   def mark_consumed(self, url: str):
     item = PostItem(url=url, stat=int(Stat.CONSUMED))
     self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
 
   # ---- 元信息 ----
 
