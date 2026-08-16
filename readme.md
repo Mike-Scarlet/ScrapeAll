@@ -25,6 +25,7 @@ archive/       历史实验脚本
 ```
 python scripts/scrape_yejiang.py    # 抓取仓库站用户帖子
 python scripts/save_bangumi.py      # 批量转存 config.py 里的分享链接
+python scripts/walk_share.py        # 只读遍历分享目录树（WALK_LINKS），打印树
 python -m pytest scrape_all/tests   # 单测（纯逻辑，不需要浏览器）
 ```
 

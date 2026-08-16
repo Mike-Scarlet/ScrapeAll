@@ -33,3 +33,6 @@ BANGUMI_LINKS = [
     "https://pan.baidu.com/s/1wtOxTjOiOf8xTcIXkuCv0w?pwd=3yp3",
     "https://pan.baidu.com/s/1MMzTYMTuF_dR5xASoZEN6A?pwd=am99",
 ]
+
+# baidu pan walk (read-only listing, scripts/walk_share.py)
+WALK_LINKS = BANGUMI_LINKS[:3]

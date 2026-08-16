@@ -17,6 +17,8 @@ FOLDER_CONTENT = ".vdAfKMb"
 
 # shared link page - file list
 FILE_ICON_CLASS = "JS-fileicon"
+FILE_SIZE_CLASS = "file-size"
+FILE_MTIME_CLASS = "ctime"
 ITEM_SELECTED_CLASS = "JS-item-active"
 DIR_CLASS_MARKER = "dir"
 LIST_HEADER = "ul.QAfdwP.tvPMvPb"

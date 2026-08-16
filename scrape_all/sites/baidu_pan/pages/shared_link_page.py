@@ -1,6 +1,9 @@
 
 import asyncio
 import logging
+import re
+from typing import Optional
+from urllib.parse import quote, unquote
 from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext, Page
 
@@ -12,18 +15,53 @@ SELECT_ALL = "all"
 SELECT_PART = "part"
 SELECT_NONE = "none"
 
+# hash 路由里的内部路径前缀，如 "/sharelink1099915704074-927179428565472"
+SHARELINK_PREFIX_RE = re.compile(r"(/sharelink[^/]+)")
+
+
+def extract_share_prefix(url: str) -> Optional[str]:
+  # hash 路径是百分号编码的（%2Fsharelink...），先解码再匹配
+  m = SHARELINK_PREFIX_RE.search(unquote(url or ""))
+  return m.group(1) if m else None
+
+
+def parent_of(path: str) -> str:
+  """'/A/B' -> '/A'；'/A' -> '/'；根 -> '/'"""
+  path = path.rstrip("/")
+  if not path or path == "/":
+    return "/"
+  cut = path.rfind("/")
+  return path[:cut] if cut > 0 else "/"
+
+
+def build_hash_url(base_url: str, internal_path: str, internal_parent: str) -> str:
+  """构造任意层级的深链：base#list/path=<enc>&parentPath=<enc>（分隔符也要编码，与页面一致）"""
+  return f"{base_url}#list/path={quote(internal_path, safe='')}&parentPath={quote(internal_parent, safe='')}"
+
+
+def breadcrumb_matches(crumb_path: str, target: str) -> bool:
+  """面包屑对长名字会截断（文本里带真实的 "..."），截断时退化为前缀比较"""
+  if crumb_path.endswith("..."):
+    return target.startswith(crumb_path[:-3])
+  return crumb_path == target
+
+
 class BaiduPanEntry:
   def __init__(self):
     self.name = None
     self.is_dir = False
     self.is_selected = False
+    self.size_text = None    # 页面原文，如 "326.1M"；文件夹为 "-"
+    self.mtime_text = None   # 页面原文，如 "2025-10-04 02:55"
 
   def __repr__(self):
     return f"BaiduPanEntry(name={self.name}, is_dir={self.is_dir}, is_selected={self.is_selected})"
 
 class SharedLinkPage:
-  def __init__(self, page: Page):
+  def __init__(self, page: Page, base_url: str = None):
     self.page = page
+    self._base_url = base_url                # 去掉 hash 的分享链接，goto_path 依赖它
+    self._share_prefix = None                # "/sharelink<id>"，首次跳子目录时发现
 
   @staticmethod
   async def open(context: BrowserContext, shared_link_url: str, password: str = None) -> "SharedLinkPage":
@@ -59,7 +97,7 @@ class SharedLinkPage:
         raise BaiduPanError("password error")
 
       logging.info(f"< get shared link: {shared_link_url} success")
-      return SharedLinkPage(page)
+      return SharedLinkPage(page, shared_link_url.split("#")[0])
 
     except BaiduPanError:
       if page is not None:
@@ -121,12 +159,80 @@ class SharedLinkPage:
           is_dir = True
           break
 
+      size_soup = dd.find(class_=locators.FILE_SIZE_CLASS)
+      mtime_soup = dd.find(class_=locators.FILE_MTIME_CLASS)
+
       ent = BaiduPanEntry()
       ent.name = content_name
       ent.is_dir = is_dir
       ent.is_selected = is_selected
+      ent.size_text = size_soup.get_text(strip=True) if size_soup else None
+      ent.mtime_text = mtime_soup.get_text(strip=True) if mtime_soup else None
       result.append(ent)
+
+    names = [ent.name for ent in result]
+    duplicates = {n for n in names if names.count(n) > 1}
+    if duplicates:
+      # 同级同名会让按名字点击/勾选命中错误目标，提前暴露
+      raise BaiduPanError(f"duplicate names in current folder: {sorted(duplicates)}")
     return result
+
+  async def goto_path(self, path: str):
+    """跳转到分享内任意目录（hash 深链，root 为 "/"）
+
+    需要 base_url（通过 SharedLinkPage.open 打开才有）
+    """
+    if self._base_url is None:
+      raise BaiduPanError("goto_path needs base_url, open page via SharedLinkPage.open")
+
+    path = "/" + path.strip("/") if path.strip("/") else "/"
+    if await self.get_current_path() == path:
+      return
+
+    if path == "/":
+      internal = internal_parent = "/"
+    else:
+      prefix = await self._ensure_share_prefix()
+      internal = prefix + path
+      internal_parent = prefix + parent_of(path)
+
+    await self.page.goto(build_hash_url(self._base_url, internal, internal_parent))
+    await self._wait_current_path(path)
+
+  async def _ensure_share_prefix(self) -> str:
+    if self._share_prefix:
+      return self._share_prefix
+
+    prefix = extract_share_prefix(self.page.url)
+    if prefix is None:
+      # 根目录的 hash 里没有前缀：进第一个子文件夹读一次再回根
+      entries = await self.list_files()
+      first_dir = next((e for e in entries if e.is_dir), None)
+      if first_dir is None:
+        raise BaiduPanError("no subfolder at root, cannot discover sharelink prefix")
+
+      await self.access_folder(first_dir.name)
+      prefix = extract_share_prefix(self.page.url)
+
+    if prefix is None:
+      raise BaiduPanError("cannot discover sharelink prefix from url")
+
+    self._share_prefix = prefix
+    if await self.get_current_path() != "/":
+      await self.page.goto(build_hash_url(self._base_url, "/", "/"))
+      await self._wait_current_path("/")
+    return prefix
+
+  async def _wait_current_path(self, path: str, timeout: float = 10.0):
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+      try:
+        if breadcrumb_matches(await self.get_current_path(), path):
+          return
+      except Exception:
+        pass
+      await asyncio.sleep(0.3)
+    raise BaiduPanError(f"goto path timeout: {path}")
 
   async def access_folder(self, folder_name: str):
     folder_locator = self.page.locator(locators.file_link(folder_name)).first
