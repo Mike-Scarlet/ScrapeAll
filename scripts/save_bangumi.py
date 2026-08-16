@@ -10,11 +10,11 @@ logging.basicConfig(
     # datefmt="[%X]",
 )
 
-from playwright.async_api import async_playwright
 from scrape_all.browser.session import BrowserSession
 from scrape_all.sites.baidu_pan.login import BaiduPanLogin
-from scrape_all.sites.baidu_pan.shared_link import BaiduPanSharedLink
-from scrape_all.sites.baidu_pan.saver import SharedLinkSaver
+from scrape_all.sites.baidu_pan.errors import BaiduPanError
+from scrape_all.sites.baidu_pan.pages.shared_link_page import SharedLinkPage
+from scrape_all.sites.baidu_pan.pages.save_dialog import SaveDialog
 from config import BAIDU_PAN_PROXY_SERVER, BAIDU_SAVE_TARGET_PATH, BANGUMI_LINKS
 
 
@@ -23,16 +23,20 @@ async def main():
     # await BaiduPanLogin.GuaranteeBaiduPanLogin(session.context)
 
     for link in BANGUMI_LINKS:
-        shared_link_page = await BaiduPanSharedLink.GetSharedLink(session.context, link)
+      try:
+        shared_link_page = await SharedLinkPage.open(session.context, link)
+      except BaiduPanError as e:
+        logging.error(f"skip link {link}: {e}")
+        continue
 
-        saver = SharedLinkSaver(shared_link_page)
-        await saver.open_save_dialog()
+      saver = SaveDialog(shared_link_page.page)
+      await saver.open()
 
-        nav_result = await saver.navigate_to_path(BAIDU_SAVE_TARGET_PATH)
-        save_result = await saver.confirm_selection()
+      nav_result = await saver.navigate_to(BAIDU_SAVE_TARGET_PATH)
+      save_result = await saver.confirm()
 
-        print(f"save result: {save_result}")
-        print("done")
+      print(f"save result: {save_result}")
+      print("done")
     input()
 
 asyncio.run(main())

@@ -1,0 +1,3 @@
+
+class BaiduPanError(RuntimeError):
+  pass
