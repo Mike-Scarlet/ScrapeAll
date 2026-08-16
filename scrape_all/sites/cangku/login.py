@@ -1,7 +1,7 @@
 
 import logging
 from playwright.async_api import BrowserContext, Page
-from scrab_browser.websites.cangku.cangku_def import CangkuDef
+from scrape_all.sites.cangku.consts import CangkuDef
 
 class CangkuLogin:
   @staticmethod

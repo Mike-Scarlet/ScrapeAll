@@ -1,6 +1,7 @@
-chromedriver*
 chrome/
 browser_session/
+data/
 __pycache__/
 *.txt
 *.png
+*.db

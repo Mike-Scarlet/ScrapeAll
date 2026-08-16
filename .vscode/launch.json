@@ -13,10 +13,10 @@
       "justMyCode": false
     },
     {
-      "name": "playground",
+      "name": "scrape_yejiang",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/playground.py",
+      "program": "${workspaceFolder}/scripts/scrape_yejiang.py",
       "console": "integratedTerminal",
       "justMyCode": false
     },
@@ -24,7 +24,7 @@
       "name": "save_bangumi",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/playground-save-bangumi.py",
+      "program": "${workspaceFolder}/scripts/save_bangumi.py",
       "console": "integratedTerminal",
       "justMyCode": false
     }

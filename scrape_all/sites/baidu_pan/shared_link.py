@@ -2,7 +2,7 @@
 import logging
 import asyncio
 from playwright.async_api import BrowserContext, Page
-from scrab_browser.websites.baidu_pan.predicates import WaitForBaidupanSharedLinkStable
+from scrape_all.sites.baidu_pan.predicates import WaitForBaidupanSharedLinkStable
   
 class BaiduPanSharedLink:
   @staticmethod

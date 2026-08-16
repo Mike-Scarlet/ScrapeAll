@@ -4,23 +4,8 @@ import logging, time, re
 
 from playwright.async_api import BrowserContext, Locator
 
-from scrab_browser.websites.cangku.cangku_def import CangkuDef
-from scrab_browser.websites.cangku.walk_cangku_user_post import WalkCangkuUserPost
-from scrab_browser.utils.wait import *
-
-from python_general_lib.database.sqlite3_wrap import *
-
-"""
-storage
-"""
-@PySQLModel(initialize_fields=True)
-class PostItem:
-  title: str = Field(not_null=True)
-  url: str = Field(not_null=True)
-  process_stat: int = Field(not_null=True)
-  retrive_time: float = Field(not_null=True)
-  use_shared_link: str = Field(not_null=True)
-  shared_link_collect: str = Field(not_null=True)   # json
+from scrape_all.sites.cangku.consts import CangkuDef
+from scrape_all.sites.cangku.user_post import WalkCangkuUserPost
 
 class DLBoxContent:
   def __init__(self):
@@ -45,10 +30,10 @@ class DLBoxContent:
 logic
 """
 class YejiangScrab:
-  def __init__(self, context: BrowserContext):
+  def __init__(self, context: BrowserContext, user_id: str, retrieve_page_max: int = 1):
     self.context = context
-    self.user_id = "309550"
-    self.retrieve_page_max = 1
+    self.user_id = user_id
+    self.retrieve_page_max = retrieve_page_max
     self.retrieve_update_time_min = None
     
   async def Run(self):

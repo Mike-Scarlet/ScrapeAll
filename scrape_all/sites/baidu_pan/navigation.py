@@ -3,7 +3,7 @@ import asyncio
 from bs4 import BeautifulSoup
 from playwright.async_api import Page, Locator
 from typing import List, Optional
-from scrab_browser.websites.baidu_pan.predicates import WaitForBaidupanSharedLinkStable
+from scrape_all.sites.baidu_pan.predicates import WaitForBaidupanSharedLinkStable
 
 SELECT_ALL = "all"
 SELECT_PART = "part"

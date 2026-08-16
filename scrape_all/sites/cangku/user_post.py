@@ -2,7 +2,7 @@
 import logging
 from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext
-from scrab_browser.websites.cangku.cangku_def import CangkuDef
+from scrape_all.sites.cangku.consts import CangkuDef
 
 class WalkCangkuUserPost:
   def __init__(self, context: BrowserContext):
