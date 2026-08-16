@@ -1,11 +1,12 @@
 
 # proxy settings, set to None to disable
-CANGKU_PROXY_SERVER = "http://127.0.0.1:2080"
+CANGKU_PROXY_SERVER = "http://127.0.0.1:20080"
 BAIDU_PAN_PROXY_SERVER = None
 
 # cangku scrape
 YEJIANG_USER_ID = "309550"
-YEJIANG_PAGE_MAX = 1
+YEJIANG_HISTORY_CUTOFF = "2025-12-01"   # 历史抓取下界（含该时刻）
+YEJIANG_PAGE_LIMIT = 100                # 翻页安全上限（正常应先触发时间/空页停止）
 
 # baidu pan save
 BAIDU_SAVE_TARGET_PATH = "/bangumi/2510"

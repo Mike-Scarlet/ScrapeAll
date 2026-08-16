@@ -2,6 +2,7 @@
 # user post list page
 POST_CARD = ".post-card.simple-post-card"
 USER_POST_CONTAINER = "#user-post"
+CARD_TITLE = ".title"
 
 # post page
 META_LABEL = '[class="meta-label"]'

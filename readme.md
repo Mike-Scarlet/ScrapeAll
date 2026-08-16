@@ -23,7 +23,8 @@ archive/       历史实验脚本
 依赖系统安装的 Chrome（`channel: chrome`），登录态持久化在 `browser_session/`，首次运行按提示人工登录一次即可。
 
 ```
-python scripts/scrape_yejiang.py    # 抓取仓库站用户帖子
+python scripts/probe_cangku.py     # cangku 只读取样：列表页+首帖 DOM 存到 data/samples/（离线分析用）
+python scripts/scrape_yejiang.py    # cangku collect：翻用户帖子列表到 cutoff/已覆盖边界，新帖/更新帖落库（增量安全）
 python scripts/save_bangumi.py      # 批量转存 config.py 里的分享链接
 python scripts/walk_share.py        # 只读遍历分享目录树（WALK_LINKS），打印树
 python scripts/save_partial.py --dry-run   # 只读：遍历 + 打印部分转存计划
