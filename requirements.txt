@@ -2,5 +2,8 @@ beautifulsoup4
 lxml
 playwright==1.40.0
 
+# dev / tests
+pytest
+
 # 自有库，不在 pypi 上，用 pip install -e <本地路径> 安装
 # python_general_lib
