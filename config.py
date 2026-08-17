@@ -16,6 +16,12 @@ CANGKU_FORCE_IDS = (
 # baidu pan save
 BAIDU_SAVE_TARGET_PATH = "/bangumi/2510"
 
+# local library（NAS 已确认库状态镜像，scripts/local_library.py）
+LOCAL_LIBRARY_ROOT = r"\\DS220plus\resource_storage\mike_scarlet\erodouga\creators\[4]confirmed"
+# 搬运目标子目录（相对 root），搬进去后文件夹名只留作者名。
+# 注意带方括号：不匹配顶层命名规范（作者名 {日期} [上传者]），根扫描天然跳过它
+LOCAL_LIBRARY_YEJIANG_DIR = "[yejiang]"
+
 BANGUMI_LINKS = [
     "https://pan.baidu.com/s/11MdxeBxy70cGuBcBmkGoow?pwd=4bs4",
     "https://pan.baidu.com/s/1ksgRwVjzzZyUSfC_5qevUA?pwd=jd8v",

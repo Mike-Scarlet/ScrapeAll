@@ -12,6 +12,7 @@ scrape_all/    核心包
   sites/       站点封装
     cangku/    cangku.moe 抓取
     baidu_pan/ 百度网盘分享页打开 / 文件树导航 / 转存
+  local_library/ NAS 已确认库（erodouga/creators/[4]confirmed）状态镜像 + yejiang 目录归整
   storage/     sqlite 存储模型
   tests/       pytest 单测（假树测试纯逻辑，不碰浏览器）
 data/          运行数据（gitignore）
@@ -33,6 +34,9 @@ python scripts/walk_share.py        # 只读遍历分享目录树（WALK_LINKS�
 python scripts/save_partial.py --dry-run   # 只读：遍历 + 打印部分转存计划
 python scripts/save_partial.py      # 遍历 + 打印计划 + 输入 yes 确认后执行转存
 python scripts/verify_save_chain.py # 只读预检：转存链路全走一遍但不点确认不建目录
+python scripts/local_library.py scan   # 扫描 NAS 库根（[4]confirmed）的 yejiang 夹 -> data/local_library.db；工况外只报告
+python scripts/local_library.py move   # dry-run 打印搬运计划："作者名 {YY.MM} [yejiang]" -> [yejiang]/作者名/（同卷 rename）
+python scripts/local_library.py move --confirm  # 交互确认后真搬；搬运后日期只在库内 folder_date 维护
 python -m pytest scrape_all/tests   # 单测（纯逻辑，不需要浏览器）
 ```
 
@@ -44,6 +48,10 @@ python -m pytest scrape_all/tests   # 单测（纯逻辑，不需要浏览器）
 - 复用旧功能（~560 行）：`SaveDialog`（弹窗树导航、新建文件夹、确认）、`SharedLinkPage` 的密码进入 / 列表解析 / 勾选交互、`login` / `predicates` / 选择器、`save_bangumi.py` 批量转存流程
 
 决策层（遍历、计划、执行、测试）全新，页面动作层沿用已验证的旧实现。
+
+## 提交规范
+
+Conventional Commits：`feat(范围): 摘要` / `fix(范围): 摘要` / `docs: 摘要` 等，范围为模块名（`cangku` / `baidu_pan` / `local_library` / `readme` ...）。
 
 ## 依赖
 

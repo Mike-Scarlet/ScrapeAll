@@ -29,3 +29,24 @@ class ScrapeMeta:
   """抓取元信息 kv（history_done 回填完成标志等）"""
   key: str = Field(primary_key=True)
   value: str = Field(not_null=True)
+
+
+@PySQLModel(initialize_fields=True)
+class LibraryFolder:
+  """local_library：NAS 已确认库（erodouga/creators/[4]confirmed）的作者文件夹镜像
+
+  folder_key = f"{uploader}:{creator}"（如 "yejiang:AS109"）。
+  搬运到 <root>\\[yejiang]\\<creator>\\ 后文件夹名不再带日期，"上一次fetch最后时间"
+  由 folder_date 在库里持续维护（初始值取自搬运前文件夹名的 {YY.MM} 标记）。
+  月份等以后要加的信息放 content_json，免 migrate。
+  """
+  folder_key: str = Field(primary_key=True)
+  creator: str = Field(not_null=True)
+  uploader: str = Field(not_null=True)
+  original_name: str = Field(not_null=True)    # 搬运前原文，如 "AS109 {25.11} [yejiang]"
+  rel_path: str = Field(not_null=True)         # 相对库根当前路径，统一存 "/"；搬运后 "yejiang/AS109"
+  folder_date: str = Field(not_null=True)      # 归一化 "2025.11"（仅年份标记为 "2022"）
+  parse_method: str = Field(not_null=True)     # 结构枚举：month_flat/year_nested/loose_files/mixed
+  content_json: str = Field(not_null=True, default="")  # {"downloaded_months": ["2024.12", ...]}
+  first_seen: float = Field(not_null=True)
+  last_seen: float = Field(not_null=True)
