@@ -92,6 +92,10 @@ def execute_plan(items: Sequence[MoveItem], store: LibraryStore, yejiang_dir: st
 
 def _months(row: LibraryFolder) -> list[str]:
   try:
-    return json.loads(row.content_json).get("downloaded_months", [])
+    v = json.loads(row.content_json).get("downloaded_months", [])
   except (ValueError, AttributeError):
     return []
+  # 新格式是 月份->路径 的 dict（重扫后即重建）；旧 list 记录在重扫前仍可搬运
+  if isinstance(v, dict):
+    return sorted(v)
+  return v

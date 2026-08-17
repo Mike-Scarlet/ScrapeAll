@@ -3,9 +3,10 @@
 import json
 import os
 
-from scrape_all.local_library.move import build_plan, execute_plan
+from scrape_all.local_library.move import _months, build_plan, execute_plan
 from scrape_all.local_library.scan import scan
 from scrape_all.local_library.store import LibraryStore
+from scrape_all.storage.models import LibraryFolder
 
 # 生产搬运目标目录名（config.LOCAL_LIBRARY_YEJIANG_DIR）：带方括号，
 # 不匹配顶层命名规范 -> 根扫描天然跳过它自己，用同名锁死该行为
@@ -17,12 +18,12 @@ def make_store(tmp_path):
   return LibraryStore(str(tmp_path / "local_library.db"))
 
 
-def upsert_a(store, now, months=None):
+def upsert_a(store, now, month_index=None):
   return store.upsert_folder(
       folder_key="yejiang:A", creator="A", uploader="yejiang",
       original_name="A {25.11} [yejiang]", rel_path="A {25.11} [yejiang]",
       folder_date="2025.11", parse_method="month_flat",
-      months=months or ["2025.01"], now=now)
+      month_index=month_index or {"2025.01": ["25.01 x"]}, now=now)
 
 
 def get_row(store, key="yejiang:A"):
@@ -32,11 +33,13 @@ def get_row(store, key="yejiang:A"):
 def test_upsert_new_then_refresh(tmp_path):
   with make_store(tmp_path) as store:
     assert upsert_a(store, 1000.0) == "new"
-    assert upsert_a(store, 2000.0, months=["2025.01", "2025.02"]) == "updated"
+    assert upsert_a(store, 2000.0,
+                    month_index={"2025.01": ["25.01 x"], "2025.02": ["25.02 y"]}) == "updated"
     row = get_row(store)
-    # first_seen 首见不动，last_seen 刷新；月份以最新扫描为准
+    # first_seen 首见不动，last_seen 刷新；月份索引以最新扫描为准
     assert row.first_seen == 1000.0 and row.last_seen == 2000.0
-    assert json.loads(row.content_json)["downloaded_months"] == ["2025.01", "2025.02"]
+    assert json.loads(row.content_json)["downloaded_months"] == {
+        "2025.01": ["25.01 x"], "2025.02": ["25.02 y"]}
     assert row.folder_date == "2025.11"
 
 
@@ -76,7 +79,7 @@ def test_scan_builds_library(tmp_path):
     assert report["out_of_scope"][0][0] == "B {25.09} [yejiang]"
     row = get_row(store)
     assert row.creator == "A" and row.folder_date == "2025.11"
-    assert json.loads(row.content_json)["downloaded_months"] == ["2025.01"]
+    assert json.loads(row.content_json)["downloaded_months"] == {"2025.01": ["25.01 x"]}
     # 重扫：同库刷新不新增
     report = scan(str(root), store, yejiang_dir=YJ_DIR, now=2000.0)
     assert report["new"] == 0 and report["updated"] == 1
@@ -110,7 +113,8 @@ def test_scan_moved_folder_refresh(tmp_path):
     assert row.rel_path == YJ_REL + "/A"
     assert row.folder_date == "2025.11"         # 文件夹名已无日期，靠库维护
     assert row.original_name == "A {25.11} [yejiang]"
-    assert json.loads(row.content_json)["downloaded_months"] == ["2025.01", "2025.02"]
+    assert json.loads(row.content_json)["downloaded_months"] == {
+        "2025.01": ["25.01 x"], "2025.02": ["25.02 y"]}
     # 根目录又冒出同名源（比如人工复制回来）：报告异常不翻转库
     (root / "A {25.11} [yejiang]").mkdir()
     report = scan(str(root), store, yejiang_dir=YJ_DIR, now=3000.0)
@@ -126,6 +130,18 @@ def test_scan_yejiang_dir_orphan(tmp_path):
 
 
 # ---- move：计划 + 执行 ----
+
+def test_move_months_reads_legacy_and_new_content():
+  # 新格式：月份 -> 夹内索引路径
+  row = LibraryFolder(folder_key="k",
+                      content_json='{"downloaded_months": {"2025.02": ["25.02 x"]}}')
+  assert _months(row) == ["2025.02"]
+  # 旧格式（重扫重建前的存量记录）：平面月份列表
+  row = LibraryFolder(folder_key="k",
+                      content_json='{"downloaded_months": ["2024.12", "2025.01"]}')
+  assert _months(row) == ["2024.12", "2025.01"]
+  # 脏数据兜底
+  assert _months(LibraryFolder(folder_key="k", content_json="")) == []
 
 def test_build_plan_and_skip_rules(tmp_path):
   root = make_tree(tmp_path)

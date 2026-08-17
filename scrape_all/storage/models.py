@@ -47,6 +47,6 @@ class LibraryFolder:
   rel_path: str = Field(not_null=True)         # 相对库根当前路径，统一存 "/"；搬运后 "yejiang/AS109"
   folder_date: str = Field(not_null=True)      # 归一化 "2025.11"（仅年份标记为 "2022"）
   parse_method: str = Field(not_null=True)     # 结构枚举：month_flat/year_nested/loose_files/mixed
-  content_json: str = Field(not_null=True, default="")  # {"downloaded_months": ["2024.12", ...]}
+  content_json: str = Field(not_null=True, default="")  # {"downloaded_months": {"2024.12": ["2024/24.12 x", ...]}} 月份->夹内索引路径
   first_seen: float = Field(not_null=True)
   last_seen: float = Field(not_null=True)

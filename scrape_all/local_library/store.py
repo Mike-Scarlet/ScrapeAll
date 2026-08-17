@@ -5,7 +5,7 @@
 
 import json
 import time
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from python_general_lib.database.sqlite3_wrap.multiple_models_sqlite_database import \
     MultipleModelsSQLiteDatabase
@@ -34,16 +34,19 @@ class LibraryStore:
 
   def upsert_folder(self, folder_key: str, creator: str, uploader: str,
                     original_name: str, rel_path: str, folder_date: str,
-                    parse_method: str, months: Sequence[str],
+                    parse_method: str, month_index: Mapping[str, Sequence[str]],
                     now: Optional[float] = None) -> str:
     """写入/刷新一条镜像记录，返回 "new" / "updated"。
 
     folder_date 等字段一律按传入值写：未搬运时 scan 传文件夹名解析出的日期
     （搬运前手工改名会跟上来）；已搬运后文件夹名无日期，scan 传回库内原值。
+    month_index 为 月份->creator 夹内索引路径，落 content_json 的
+    downloaded_months（重跑 scan 即可把旧 list 格式记录重建为新格式）。
     """
     if now is None:
       now = time.time()
-    content = json.dumps({"downloaded_months": list(months)}, ensure_ascii=False)
+    content = json.dumps({"downloaded_months": month_index},
+                         ensure_ascii=False, sort_keys=True)
     row = self.get(folder_key)
     if row is None:
       self.db.InsertRecord(LibraryFolder(

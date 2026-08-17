@@ -79,6 +79,8 @@ def test_classify_month_flat():
   r = classify_folder(top, make_lister({}))
   assert r.ok and r.parse_method == ParseMethod.MONTH_FLAT
   assert r.months == ["2024.12", "2025.01"]
+  assert r.month_index == {"2024.12": ["24.12 水兰儿 vip房①"],
+                           "2025.01": ["25.01 水兰儿 vip房②"]}
 
 
 def test_classify_year_nested_with_day_folders_and_stray_file():
@@ -91,6 +93,11 @@ def test_classify_year_nested_with_day_folders_and_stray_file():
   r = classify_folder(top, make_lister(inner))
   assert r.ok and r.parse_method == ParseMethod.YEAR_NESTED
   assert r.months == ["2023.01", "2023.04", "2024.02"]
+  assert r.month_index == {
+      "2023.01": ["2023/23.01.03 纳西妲 1"],
+      "2023.04": ["2023/23.04.04 纳西妲 2"],
+      "2024.02": ["2024/24.02.05 纳西妲 9"],
+  }
   assert any("cover.jpg" in w for w in r.reasons)   # 散文件只提示不判死
 
 
@@ -100,6 +107,8 @@ def test_classify_loose_files():
   r = classify_folder(top, make_lister({}))
   assert r.ok and r.parse_method == ParseMethod.LOOSE_FILES
   assert r.months == ["2023.03", "2023.05"]
+  assert r.month_index == {"2023.03": ["23.03 津岛善子_23.03 津岛善子.mp4"],
+                           "2023.05": ["23.05 岚千砂都_23.05 岚千砂都 1.mp4"]}
 
 
 def test_classify_mixed_year_and_month():
@@ -109,11 +118,14 @@ def test_classify_mixed_year_and_month():
   r = classify_folder(top, make_lister(inner))
   assert r.ok and r.parse_method == ParseMethod.MIXED
   assert r.months == ["2024.03", "2025.01", "2025.06"]
+  assert r.month_index == {"2024.03": ["2024/24.03 xxx"],
+                           "2025.01": ["2025-01"], "2025.06": ["2025-6"]}
 
 
 def test_classify_collects_months_at_any_depth():
   # xssxsxk 形态：年份夹下只有少量月份夹，但月份夹内部还有日期命名的子夹，
-  # 全深度递归收集，漏抓会导致误判"该月未下载"
+  # 全深度递归收集，漏抓会导致误判"该月未下载"；month_index 同时记录
+  # 月份夹本身与内部日期子夹两条索引链（目录树如何索引到该月）
   top = [Entry("2025", True)]
   inner = {
       "2025": [Entry("25.01", True), Entry("25.06", True)],
@@ -123,6 +135,10 @@ def test_classify_collects_months_at_any_depth():
   r = classify_folder(top, make_lister(inner))
   assert r.ok and r.parse_method == ParseMethod.YEAR_NESTED
   assert r.months == ["2025.01", "2025.06"]
+  assert r.month_index == {
+      "2025.01": ["2025/25.01", "2025/25.01/25.01.03 a", "2025/25.01/25.01.15 b"],
+      "2025.06": ["2025/25.06", "2025/25.06/25.06.02 c"],
+  }
 
 
 def test_classify_out_of_scope_shapes():

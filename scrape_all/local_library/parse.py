@@ -50,7 +50,10 @@ class FolderScan:
   """一个 creator 文件夹内部结构的解析结果"""
   ok: bool
   parse_method: str = ""
-  months: list[str] = field(default_factory=list)   # 归一化月份，已排序
+  months: list[str] = field(default_factory=list)   # 归一化月份，已排序（month_index 的 keys）
+  month_index: dict[str, list[str]] = field(default_factory=dict)
+  # 月份 -> creator 夹内相对路径（"/" 分隔，已排序）：该月被目录树索引到的每一条
+  # （月份夹本身与其内部日期子夹/散文件都是独立索引链）；rel_path + 路径 = 库根全路径
   reasons: list[str] = field(default_factory=list)  # 工况外原因；ok=True 时为提示性 warning
 
 
@@ -99,7 +102,8 @@ def classify_folder(top: list[Entry],
       有一个覆盖不了 -> 整夹工况外（系列结构如 "1.主系列" 就死在这里）
     - 年份夹内层：目录必须全是日期 token；散文件容忍——不判工况外
   月份收集在判 ok 的结构内全深度递归（月份夹内部还有日期命名的子夹，
-  如 xssxsxk/2025/25.01/25.01.03 xx，漏抓会误判"该月未下载"）。
+  如 xssxsxk/2025/25.01/25.01.03 xx，漏抓会误判"该月未下载"）；每条月份
+  token 同时记录其所在相对路径（month_index），供审计误判与追溯来源。
   lister(相对路径，"/" 分隔) 返回该子夹的一层条目，供测试注入假树。
   """
   if not top:
@@ -135,19 +139,19 @@ def classify_folder(top: list[Entry],
         # 年份夹里出现非日期目录 = 结构不确定（可能是系列细分），整夹工况外
         return FolderScan(False, reasons=[f"年份夹 {yd} 内非日期目录: {e.name}"])
 
-  months: set[str] = set()
+  index: dict[str, set[str]] = {}
 
   def collect(entries: list[Entry], rel: str):
     for e in entries:
       mo = month_of(e.name)
+      path = f"{rel}/{e.name}" if rel else e.name
       if mo:
-        months.add(mo)
+        index.setdefault(mo, set()).add(path)
       if e.is_dir:
-        child = f"{rel}/{e.name}" if rel else e.name
-        collect(lister(child), child)
+        collect(lister(path), path)
 
   collect(top, "")
-  if not months:
+  if not index:
     return FolderScan(False, reasons=["判 ok 但一个月份都没抓到（规则漏洞，请人工看）"])
 
   if year_dirs and (has_month_dir or has_dated_file):
@@ -158,4 +162,5 @@ def classify_folder(top: list[Entry],
     method = ParseMethod.MONTH_FLAT
   else:
     method = ParseMethod.LOOSE_FILES
-  return FolderScan(True, method, sorted(months), warnings)
+  month_index = {mo: sorted(paths) for mo, paths in index.items()}
+  return FolderScan(True, method, sorted(month_index), month_index, warnings)

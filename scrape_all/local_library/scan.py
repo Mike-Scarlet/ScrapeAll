@@ -32,6 +32,7 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
       结构彻底可解析才入库，否则记 out_of_scope（带原因），留给人工处理
     - yejiang/ 下的作者夹：文件夹名即 creator（无日期），folder_date/original_name
       以库内值为准（DB 维护），只刷新月份/结构/last_seen
+  （月份按 月份->夹内索引路径 落库，rel_path + 索引路径 = 库根全路径）
   """
   if now is None:
     now = time.time()
@@ -60,7 +61,7 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
     state = store.upsert_folder(
         folder_key=folder_key, creator=fn.creator, uploader=uploader,
         original_name=name, rel_path=name, folder_date=fn.folder_date,
-        parse_method=sub.parse_method, months=sub.months, now=now)
+        parse_method=sub.parse_method, month_index=sub.month_index, now=now)
     report["new" if state == "new" else "updated"] += 1
     report["by_method"][sub.parse_method] += 1
     report["warnings"].extend(f"{name}: {w}" for w in sub.reasons)
@@ -90,7 +91,7 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
         folder_key=folder_key, creator=row.creator, uploader=row.uploader,
         original_name=row.original_name, rel_path=f"{yejiang_dir}/{name}",
         folder_date=row.folder_date, parse_method=sub.parse_method,
-        months=sub.months, now=now)
+        month_index=sub.month_index, now=now)
     report["new" if state == "new" else "updated"] += 1
     report["by_method"][sub.parse_method] += 1
     report["warnings"].extend(f"{yejiang_dir}/{name}: {w}" for w in sub.reasons)
