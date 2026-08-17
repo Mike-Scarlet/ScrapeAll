@@ -112,6 +112,13 @@ class SharedLinkPage:
       if await SharedLinkPage.IsInRequirePasswordPage(page):
         raise BaiduPanError("password error")
 
+      # 失效分享（标题含"链接不存在"等）在这里挡下，否则会在后续 walk 的稳定等待处超时
+      title = await page.title()
+      if any(m in title for m in ("链接不存在", "分享已取消", "分享已删除", "文件已删除")):
+        if page is not None:
+          await page.close()
+        raise BaiduPanError(f"share invalid: {title}")
+
       logging.info(f"< get shared link: {shared_link_url} success")
       # share/init?surl= 之类的链接加载后会被规范化成 /s/xxx 形式，
       # base 必须取加载后的真实 URL，否则每次 hash 跳转都变成整页重定向
@@ -221,7 +228,7 @@ class SharedLinkPage:
     await self.page.wait_for_timeout(300)
 
   async def _ensure_share_prefix(self) -> str:
-    if self._share_prefix:
+    if self._share_prefix is not None:
       return self._share_prefix
 
     prefix = extract_share_prefix(self.page.url)
@@ -229,14 +236,14 @@ class SharedLinkPage:
       # 根目录的 hash 里没有前缀：进第一个子文件夹读一次再回根
       entries = await self.list_files()
       first_dir = next((e for e in entries if e.is_dir), None)
-      if first_dir is None:
-        raise BaiduPanError("no subfolder at root, cannot discover sharelink prefix")
-
-      await self.access_folder(first_dir.name)
-      prefix = extract_share_prefix(self.page.url)
+      if first_dir is not None:
+        await self.access_folder(first_dir.name)
+        prefix = extract_share_prefix(self.page.url)
 
     if prefix is None:
-      raise BaiduPanError("cannot discover sharelink prefix from url")
+      # 有些分享的 hash 路由不带 sharelink 前缀，路径就是普通路径（实测单目录结构的分享）；
+      # 根下没有子文件夹时也无法探测，但那种情况不会有更深的导航
+      prefix = ""
 
     self._share_prefix = prefix
     return prefix
