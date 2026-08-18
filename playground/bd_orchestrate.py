@@ -14,6 +14,18 @@ navigate_to 逐级自动建缺失目录 -> 确认并等待成功提示。
 进入下一条。全量 35 链接若先把页面全打开再统一执行，浏览器要同时挂 30+ 个分享页，
 内存压力下标签可能被丢弃；流水式任意时刻只有当前链接的页面，且中途挂掉时
 已完成的链接不受影响（重跑用 --ids 指定剩余即可）。
+
+TODO（方案待定，先记着）：
+  1. 逻辑升包：select_ops/make_policy/make_target_for/load_* 还在 playground
+     （bd_orchestrate_dryrun.py + 本文件），流程稳定后升入
+     scrape_all.sites.baidu_pan，纯逻辑单测（_logic_selftest.py）跟着搬。
+  2. 消费标记：转存成功的帖子把 cangku.db stat 2->3，重跑天然排除已转存；
+     现在只能靠 --ids 手动剔除（本次全量即剔了 ink+ 验证帖）。
+     要定：标记粒度（帖子级 or 链接级）、失败 op 是否阻止升级、
+     死链/部分失败帖子留在 2 还是单列。
+  3. 死链补偿：山含 225111 分享已删（链接不存在），等仓库更新帖子里的
+     链接后补跑；可给 load_share_links 加包含死链的入口，或靠 2 的
+     stat 流转 + 仓库侧重抓自然覆盖。
 """
 import asyncio
 import os
