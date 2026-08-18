@@ -9,8 +9,9 @@
   4. 重抓月精确补齐：本地路径给出该月已有内容的名字，把该月的目录单元在分享里
      展开一层，只挑本地没有的子项（同名视为已有；"xx new.mp4" 这类改名新版会选中）；
      全都在 -> 该月已完整，不重抓。展开失败回退整月转存。
-  5. 打印对比报告 + 转存计划（build_save_plan）。目标路径镜像本地库 rel_path：
-     TARGET_BASE/[yejiang]/<作者名>/…，转存后搬运回 NAS 零改名（根前缀仍占位待定）
+  5. 打印对比报告 + 转存计划（build_save_plan）。目标路径：已匹配作者镜像本地库
+     rel_path（TARGET_BASE/[yejiang]/作者/…，搬运回 NAS 零改名）；未匹配作者直接
+     落转存根目录 TARGET_BASE（作者层去掉，待人工确认后再归库）
 
 用法：
   python playground/bd_orchestrate_dryrun.py --ids 225896,216571   # 指定帖子 id
@@ -178,20 +179,20 @@ def find_node(root: PanNode, path: str):
 
 
 def make_target_for(creator_roots: dict):
-  """source_dir -> 目标路径：/<分享侧作者>/… 镜像到各自的目标根下。
+  """source_dir -> 目标路径：把分享路径的作者层替换成该作者的目标根。
 
-  creator_roots = {分享侧作者名: 目标根}（已匹配作者的根 = TARGET_BASE/本地 rel_path，
-  未匹配的新作者沿用库约定 TARGET_BASE/[yejiang]/<分享侧名>），保持目录层级不变，
-  转存后搬运回 NAS 是纯复制零改名。
+  creator_roots = {分享侧作者名: 目标根}：
+    已匹配作者 -> TARGET_BASE/本地 rel_path（[yejiang]/作者/…），层级不变，
+                 转存后搬运回 NAS 是纯复制零改名
+    未匹配作者 -> TARGET_BASE 本身（直接落转存根目录，作者层去掉），
+                 待人工确认后再归库
   """
   def target(source_dir: str) -> str:
     stripped = source_dir.strip("/")
     if not stripped:
       return TARGET_BASE
     first, _, rest = stripped.partition("/")
-    root = creator_roots.get(first)
-    if root is None:
-      root = f"{TARGET_BASE.rstrip('/')}/[yejiang]/{first}"
+    root = creator_roots.get(first) or TARGET_BASE
     return f"{root}/{rest}" if rest else root
   return target
 
@@ -382,7 +383,7 @@ async def main():
           if db and db[1]:
             creator_roots[creator] = f"{TARGET_BASE.rstrip('/')}/{db[1]}"
           else:
-            creator_roots[creator] = f"{TARGET_BASE.rstrip('/')}/[yejiang]/{creator}"
+            creator_roots[creator] = TARGET_BASE.rstrip("/")   # 未匹配：直接落转存根
 
           if db:
             emit(f"  作者 {creator}  [本地库 {db[0]}（{db[1]}），{len(db[2])} 个月，"

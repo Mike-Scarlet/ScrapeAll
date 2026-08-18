@@ -87,11 +87,12 @@ async def main():
     print("精确补齐计划 ok:")
     print(format_plan(ops))
 
-    # ---- 目标映射：未匹配作者落 [yejiang] 约定，层级原样保留
-    tgt = make_target_for({"AS109": "/转存待定/[yejiang]/AS109"})
+    # ---- 目标映射：已匹配镜像 rel_path；未匹配直接落转存根（作者层去掉）
+    tgt = make_target_for({"AS109": "/转存待定/[yejiang]/AS109", "Mimu": "/转存待定"})
     assert tgt("/AS109") == "/转存待定/[yejiang]/AS109"
     assert tgt("/AS109/2025-01") == "/转存待定/[yejiang]/AS109/2025-01"
-    assert tgt("/NFFA/2025") == "/转存待定/[yejiang]/NFFA/2025"
+    assert tgt("/Mimu/2025") == "/转存待定/2025"        # 未匹配：根替换作者层
+    assert tgt("/NFFA/2025") == "/转存待定/2025"         # 没登记的作者同样落根
     assert tgt("/") == "/转存待定"
     print("make_target_for ok")
 
