@@ -8,8 +8,12 @@ navigate_to 逐级自动建缺失目录 -> 确认并等待成功提示。
   python playground/bd_orchestrate.py --smoke            # 冒烟集 4 链接（覆盖全部操作形态）
   python playground/bd_orchestrate.py --ids 216571,219782
   python playground/bd_orchestrate.py                    # 全部 stat=2（30+ 链接，慢）
-  --yes 跳过人工确认（自动化场景用；默认要输 yes）
-流程：全部链接先 walk+选点并打印计划（页面保持打开）-> 确认 -> 逐链接执行 -> 汇总。
+  --yes 跳过人工确认（自动化场景用；默认在第一个非空计划前要输 yes）
+
+流程（逐链接流水，不攒页面）：每条链接 walk+选点 -> 打印计划 -> 立刻执行 -> 关页，
+进入下一条。全量 35 链接若先把页面全打开再统一执行，浏览器要同时挂 30+ 个分享页，
+内存压力下标签可能被丢弃；流水式任意时刻只有当前链接的页面，且中途挂掉时
+已完成的链接不受影响（重跑用 --ids 指定剩余即可）。
 """
 import asyncio
 import os
@@ -40,6 +44,14 @@ def emit(line=""):
   print(line)
 
 
+async def close_quietly(link_page):
+  # 执行期 save_executor 从第 2 个 op 起换新页并关掉原页面，这里可能已关过
+  try:
+    await link_page.page.close()
+  except Exception:
+    pass
+
+
 async def main():
   args = sys.argv[1:]
   use_smoke = "--smoke" in args
@@ -61,10 +73,15 @@ async def main():
 
   local = load_local_months()
   emit(f"目标根: {TARGET_BASE}")
-  emit(f"本地库作者 {len(local)} 个；分享链接 {len(links)} 个\n")
+  emit(f"本地库作者 {len(local)} 个；分享链接 {len(links)} 个")
 
-  plans = []   # (link, SharedLinkPage, ops)；页面保持打开，执行阶段直接复用
+  ok_ops = total_ops = 0
+  done_posts = []      # 该帖所有 op 都成功
+  partial_posts = []   # 部分 op 失败/不确定
+  failed_posts = []    # walk/打开就失败，一个 op 都没执行
+
   async with BrowserSession(BAIDU_PAN_PROXY_SERVER) as session:
+    confirmed = auto_yes
     for li, link in enumerate(links, 1):
       print(f"\n=== [{li}/{len(links)}] post {link['post_id']}  {link['title'][:40]}")
 
@@ -91,52 +108,67 @@ async def main():
             emit(f"  !! failed, skip: {msg}")
             break
       if tree is None:
+        failed_posts.append(f"{link['post_id']} (打开/walk 失败)")
         continue
 
       ops = await select_ops(link_page, tree, link, local, emit)
-      plans.append((link, link_page, ops))
+
+      if not ops:
+        emit("  （无可转存内容，跳过）")
+        await close_quietly(link_page)
+        await asyncio.sleep(2)
+        continue
+
       print("\n--- save plan")
       print(format_plan(ops))
-      await asyncio.sleep(2)   # 链接间停一下，降低风控风险
 
-    total = sum(len(ops) for _, _, ops in plans)
-    if total == 0:
-      print("\n没有可转存的内容（计划为空），退出")
-      return
-
-    if not auto_yes:
-      try:
-        answer = input(f"\n共 {len(plans)} 个链接 {total} 个转存操作，"
-                       f"目标根 {TARGET_BASE}，确认无误输入 yes 开始执行: ")
-      except EOFError:
-        answer = ""
-      if answer.strip() != "yes":
-        print("未确认，什么都不做，退出")
-        return
-
-    ok_ops = 0
-    for link, link_page, ops in plans:
-      if not ops:
-        await link_page.page.close()
-        continue
-      print(f"\n=== saving post {link['post_id']}  {link['title'][:40]}")
+      if not confirmed:
+        try:
+          answer = input(f"\npost {link['post_id']} 计划 {len(ops)} 项，目标根 {TARGET_BASE}，"
+                         f"输入 yes 开始执行（后续链接不再确认）: ")
+        except EOFError:
+          answer = ""
+        if answer.strip() != "yes":
+          print("未确认，退出")
+          return
+        confirmed = True
 
       async def page_factory(link=link):
         # 实测同页"转存成功后再 goto"会确定性挂死，从第 2 个 op 起每个 op 换新页
         return await SharedLinkPage.open(session.context, link["url"],
                                          password=link["pwd"])
 
-      results = await execute_save_plan(link_page, ops, page_factory=page_factory)
+      try:
+        results = await execute_save_plan(link_page, ops, page_factory=page_factory)
+      except Exception as e:
+        logging.error(f"execute crashed ({link['post_id']}): {type(e).__name__}: {e}")
+        results = []
+
       print(format_results(results))
-      ok_ops += sum(1 for r in results if r.ok)
-      await link_page.page.close()
+      total_ops += len(ops)
+      n_ok = sum(1 for r in results if r.ok)
+      ok_ops += n_ok
+      if n_ok == len(ops):
+        done_posts.append(link["post_id"])
+      else:
+        partial_posts.append(f"{link['post_id']} ({n_ok}/{len(ops)} op 成功)")
 
-    print(f"\n完成: {ok_ops}/{total} 个操作成功（失败/不确定的见上方 note，需人工核对）")
+      await close_quietly(link_page)
+      await asyncio.sleep(3)   # 链接间停一下，降低风控风险
 
-    try:
-      input("\ndone, press enter to close browser ")
-    except EOFError:
-      pass
+    print(f"\n=== 汇总: 操作 {ok_ops}/{total_ops} 成功；帖子 全成功 {len(done_posts)}"
+          f" + 部分失败 {len(partial_posts)} + walk 失败 {len(failed_posts)}"
+          f" / 共 {len(links)}")
+    if partial_posts:
+      print("部分失败: " + ", ".join(partial_posts))
+    if failed_posts:
+      print("walk 失败: " + ", ".join(failed_posts))
+
+    if not auto_yes:
+      try:
+        input("\ndone, press enter to close browser ")
+      except EOFError:
+        pass
 
 
 if __name__ == "__main__":
