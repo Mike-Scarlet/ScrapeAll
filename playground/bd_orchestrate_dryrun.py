@@ -11,7 +11,7 @@
   3. 重抓月精确补齐：本地路径给出该月已有内容的名字，把该月的目录单元在分享里
      展开一层，只挑本地没有的子项（同名视为已有；"xx new.mp4" 这类改名新版会选中）；
      全都在 -> 该月已完整，不重抓。展开失败回退整月转存。
-  4. 打印对比报告 + 转存计划（build_save_plan）。目标统一落 TARGET_BASE/[yejiang]/：
+  4. 打印对比报告 + 转存计划（build_save_plan）。目标统一落 /扒/<运行日期>/[yejiang]/：
      已匹配作者镜像本地库 rel_path（搬运回 NAS 零改名），新作者用分享侧作者名
 
 用法：
@@ -22,6 +22,7 @@
 可选： --show-tree 控制台也打印目录树；报告全文落 data/bd_orchestrate_report.txt
 """
 import asyncio
+import datetime
 import json
 import os
 import sqlite3
@@ -49,8 +50,9 @@ CANGKU_DB = os.path.join(DATA, "cangku.db")
 LOCAL_DB = os.path.join(DATA, "local_library.db")
 REPORT = os.path.join(DATA, "bd_orchestrate_report.txt")
 
-# 转存目标根前缀（编排真跑前的开放决策）；其下镜像本地库 rel_path（[yejiang]/作者/…）
-TARGET_BASE = "/转存待定"
+# 转存目标根：/扒/<运行日期>（按跑的日期分批，如 /扒/20260818）；
+# 其下统一 [yejiang]/作者/，已匹配作者镜像本地库 rel_path
+TARGET_BASE = f"/扒/{datetime.date.today():%Y%m%d}"
 
 # 作者别名：分享根目录名 / box_title 与本地库作者名对不上时的人工映射
 # （大小写差异 casefold 自动处理；这里只放自动匹配不了的，如罗马字 vs 片假名、繁简 鱼/魚）

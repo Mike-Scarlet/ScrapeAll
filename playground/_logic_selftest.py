@@ -8,8 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scrape_all.sites.baidu_pan.save_plan import build_save_plan, format_plan
 from scrape_all.sites.baidu_pan.tree import EntryInfo, PanNode, walk_tree, format_tree
 from playground.bd_orchestrate_dryrun import (
-    make_policy, collect_creator_months, collect_months_under, compute_targets,
-    month_covered_names, name_covered, find_node, make_target_for)
+    TARGET_BASE, make_policy, collect_creator_months, collect_months_under,
+    compute_targets, month_covered_names, name_covered, find_node, make_target_for)
+
+TB = TARGET_BASE   # 目标根随运行日期变，断言统一用它拼
 
 # 假分享：year_nested + month_flat + 年份下散文件 三种结构混合
 FAKE = {
@@ -73,12 +75,12 @@ async def main():
     selected = {"/Mimu", "/NFFA", "/AS109/2025.5.25【万由里 4】"}
     ops = build_save_plan(tree3, want=lambda n: n.path in selected,
                           target_for=make_target_for(
-                              {"AS109": "/转存待定/[yejiang]/AS109"}))
+                              {"AS109": f"{TB}/[yejiang]/AS109"}))
     assert ops[0].source_dir == "/" and ops[0].names == ["Mimu", "NFFA"]
-    assert ops[0].target_dir == "/转存待定/[yejiang]"      # 新作者整目录 -> [yejiang]/<名>
+    assert ops[0].target_dir == f"{TB}/[yejiang]"      # 新作者整目录 -> [yejiang]/<名>
     assert ops[1].source_dir == "/AS109" and \
         ops[1].names == ["2025.5.25【万由里 4】"]
-    assert ops[1].target_dir == "/转存待定/[yejiang]/AS109"
+    assert ops[1].target_dir == f"{TB}/[yejiang]/AS109"
     print("新作者整目录 + 已匹配增量计划 ok:")
     print(format_plan(ops))
 
@@ -112,19 +114,19 @@ async def main():
     missing = [c for c in node.children if not name_covered(c.name, cov)]
     assert [c.name for c in missing] == ["26.02 b", "26.02 c.mp4"]
     ops = build_save_plan(tree, want=lambda n: n.path in {c.path for c in missing},
-                          target_for=make_target_for({"Mimu": "/转存待定/[yejiang]/Mimu"}))
+                          target_for=make_target_for({"Mimu": f"{TB}/[yejiang]/Mimu"}))
     assert len(ops) == 1 and ops[0].source_dir == "/Mimu/2026/26.02 x"
     assert ops[0].names == ["26.02 b", "26.02 c.mp4"]
-    assert ops[0].target_dir == "/转存待定/[yejiang]/Mimu/2026/26.02 x"
+    assert ops[0].target_dir == f"{TB}/[yejiang]/Mimu/2026/26.02 x"
     print("精确补齐计划 ok:")
     print(format_plan(ops))
 
     # ---- 目标映射：已匹配镜像 rel_path；未登记作者兜底带名落 [yejiang]
-    tgt = make_target_for({"AS109": "/转存待定/[yejiang]/AS109"})
-    assert tgt("/AS109") == "/转存待定/[yejiang]/AS109"
-    assert tgt("/AS109/2025-01") == "/转存待定/[yejiang]/AS109/2025-01"
-    assert tgt("/NFFA/2025") == "/转存待定/[yejiang]/NFFA/2025"
-    assert tgt("/") == "/转存待定/[yejiang]"
+    tgt = make_target_for({"AS109": f"{TB}/[yejiang]/AS109"})
+    assert tgt("/AS109") == f"{TB}/[yejiang]/AS109"
+    assert tgt("/AS109/2025-01") == f"{TB}/[yejiang]/AS109/2025-01"
+    assert tgt("/NFFA/2025") == f"{TB}/[yejiang]/NFFA/2025"
+    assert tgt("/") == f"{TB}/[yejiang]"
     print("make_target_for ok")
 
 
