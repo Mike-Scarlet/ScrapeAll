@@ -120,7 +120,13 @@ async def main():
         await link_page.page.close()
         continue
       print(f"\n=== saving post {link['post_id']}  {link['title'][:40]}")
-      results = await execute_save_plan(link_page, ops)
+
+      async def page_factory(link=link):
+        # 实测同页"转存成功后再 goto"会确定性挂死，从第 2 个 op 起每个 op 换新页
+        return await SharedLinkPage.open(session.context, link["url"],
+                                         password=link["pwd"])
+
+      results = await execute_save_plan(link_page, ops, page_factory=page_factory)
       print(format_results(results))
       ok_ops += sum(1 for r in results if r.ok)
       await link_page.page.close()
