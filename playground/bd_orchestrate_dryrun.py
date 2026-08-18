@@ -312,6 +312,88 @@ def fmt_months(months):
   return " ".join(months) if months else "(无)"
 
 
+async def select_ops(link_page, tree, link, local, emit):
+  """walk 完的树 -> 转存操作列表：逐作者分道（新作者整目录/已匹配增量）+ 重抓月精确补齐。
+
+  dry-run 与真跑（bd_orchestrate.py）共用这一段，保证两边选中的内容完全一致。
+  emit(line) 负责过程明细输出；重抓月展开要用 link_page（页面须保持打开）。
+  """
+  selected_paths = set()
+  creator_roots = {}          # 分享侧作者名 -> 转存目标根（镜像本地 rel_path）
+  n_creators = 0
+  for c in tree.children or []:
+    if not c.is_dir:
+      continue
+    n_creators += 1
+    creator = c.name
+    db, how = resolve_local(creator, link["box_title"], local)
+
+    if db is None:
+      emit(f"  作者 {creator}  [本地库无记录 -> 整目录全转存（不 walk）]")
+      selected_paths.add(c.path)
+      continue
+
+    creator_roots[creator] = (f"{TARGET_BASE.rstrip('/')}/{db[1]}" if db[1]
+                              else f"{TARGET_BASE.rstrip('/')}/[yejiang]/{creator}")
+    info = collect_months_under(c)
+    share_months = set(info["months"])
+    selected, detail = compute_targets(share_months, db[2])
+    month_paths = db[3]
+
+    emit(f"  作者 {creator}  [本地库 {db[0]}（{db[1]}），{len(db[2])} 个月，"
+         f"最后抓取 {max(db[2])}；匹配: {how}]")
+    emit(f"    分享有 {len(share_months)} 个月: {fmt_months(sorted(share_months))}")
+    emit(f"    转存 {len(selected)} 个月"
+         + (f"（重抓最后月 {detail['resave']}）" if detail["resave"] else "")
+         + (f" + 未覆盖 {fmt_months(detail['uncovered'])}" if detail["uncovered"] else ""))
+    if detail["skipped"]:
+      emit(f"    跳过已覆盖 {len(detail['skipped'])} 个月: {fmt_months(detail['skipped'])}")
+    if detail["db_only"]:
+      emit(f"    注意: 本地有而分享没有 {len(detail['db_only'])} 个月: "
+           f"{fmt_months(detail['db_only'])}")
+    if info["odd"]:
+      emit(f"    !! 结构异常目录(不选): {info['odd']}")
+
+    for mo in selected:
+      if mo == detail.get("resave") and month_paths.get(mo) is not None:
+        # 重抓月精确补齐：本地路径已知该月有什么 -> 只挑本地没有的子项
+        covered = month_covered_names(month_paths[mo])
+        for upath in info["months"].get(mo, []):
+          node = find_node(tree, upath)
+          if node is None or (node.is_dir and not node.is_leaf_unit()):
+            selected_paths.add(upath)          # 树里对不上，保守整月转存
+            continue
+          if not node.is_dir:                  # 散文件单元：按名字判
+            if name_covered(node.name, covered):
+              emit(f"    重抓月 {mo}: {node.name} 本地已有，跳过")
+            else:
+              selected_paths.add(upath)
+            continue
+          try:
+            await expand_month_node(link_page, node)
+          except Exception as e:
+            logging.warning(f"重抓月 {mo} 展开失败 {upath}: {e}，回退整月转存")
+            selected_paths.add(upath)
+            continue
+          missing = [c2 for c2 in node.children if not name_covered(c2.name, covered)]
+          if not node.children:
+            emit(f"    重抓月 {mo}: 分享里是空目录，跳过")
+          elif not missing:
+            emit(f"    重抓月 {mo} 已完整（{len(node.children)} 项全在本地），不重抓")
+          else:
+            selected_paths.update(c2.path for c2 in missing)
+            have = len(node.children) - len(missing)
+            emit(f"    重抓月 {mo} 精确补齐: 本地已有 {have}/{len(node.children)} 项，"
+                 f"补 {len(missing)}: {', '.join(c2.name for c2 in missing)}")
+      else:
+        selected_paths.update(info["months"].get(mo, []))
+
+  if n_creators == 0:
+    emit("  (根下没有目录?)")
+  return build_save_plan(tree, want=lambda n: n.path in selected_paths,
+                         target_for=make_target_for(creator_roots))
+
+
 async def main():
   args = sys.argv[1:]
   show_tree = "--show-tree" in args
@@ -376,88 +458,14 @@ async def main():
         if tree is None:
           continue
 
-        # 逐作者分道：未匹配 -> 整目录单元全转存（walk 已停在作者层）；
-        # 已匹配 -> 增量对比 + 重抓月精确补齐（要用页面，处理完再关）
-        selected_paths = set()
-        creator_roots = {}          # 分享侧作者名 -> 转存目标根（镜像本地 rel_path）
-        n_creators = 0
-        for c in tree.children or []:
-          if not c.is_dir:
-            continue
-          n_creators += 1
-          creator = c.name
-          db, how = resolve_local(creator, link["box_title"], local)
-
-          if db is None:
-            emit(f"  作者 {creator}  [本地库无记录 -> 整目录全转存（不 walk）]")
-            selected_paths.add(c.path)
-            continue
-
-          creator_roots[creator] = (f"{TARGET_BASE.rstrip('/')}/{db[1]}" if db[1]
-                                    else f"{TARGET_BASE.rstrip('/')}/[yejiang]/{creator}")
-          info = collect_months_under(c)
-          share_months = set(info["months"])
-          selected, detail = compute_targets(share_months, db[2])
-          month_paths = db[3]
-
-          emit(f"  作者 {creator}  [本地库 {db[0]}（{db[1]}），{len(db[2])} 个月，"
-               f"最后抓取 {max(db[2])}；匹配: {how}]")
-          emit(f"    分享有 {len(share_months)} 个月: {fmt_months(sorted(share_months))}")
-          emit(f"    转存 {len(selected)} 个月"
-               + (f"（重抓最后月 {detail['resave']}）" if detail["resave"] else "")
-               + (f" + 未覆盖 {fmt_months(detail['uncovered'])}" if detail["uncovered"] else ""))
-          if detail["skipped"]:
-            emit(f"    跳过已覆盖 {len(detail['skipped'])} 个月: {fmt_months(detail['skipped'])}")
-          if detail["db_only"]:
-            emit(f"    注意: 本地有而分享没有 {len(detail['db_only'])} 个月: "
-                 f"{fmt_months(detail['db_only'])}")
-          if info["odd"]:
-            emit(f"    !! 结构异常目录(不选): {info['odd']}")
-
-          for mo in selected:
-            if mo == detail.get("resave") and month_paths.get(mo) is not None:
-              # 重抓月精确补齐：本地路径已知该月有什么 -> 只挑本地没有的子项
-              covered = month_covered_names(month_paths[mo])
-              for upath in info["months"].get(mo, []):
-                node = find_node(tree, upath)
-                if node is None or (node.is_dir and not node.is_leaf_unit()):
-                  selected_paths.add(upath)          # 树里对不上，保守整月转存
-                  continue
-                if not node.is_dir:                  # 散文件单元：按名字判
-                  if name_covered(node.name, covered):
-                    emit(f"    重抓月 {mo}: {node.name} 本地已有，跳过")
-                  else:
-                    selected_paths.add(upath)
-                  continue
-                try:
-                  await expand_month_node(link_page, node)
-                except Exception as e:
-                  logging.warning(f"重抓月 {mo} 展开失败 {upath}: {e}，回退整月转存")
-                  selected_paths.add(upath)
-                  continue
-                missing = [c for c in node.children if not name_covered(c.name, covered)]
-                if not node.children:
-                  emit(f"    重抓月 {mo}: 分享里是空目录，跳过")
-                elif not missing:
-                  emit(f"    重抓月 {mo} 已完整（{len(node.children)} 项全在本地），不重抓")
-                else:
-                  selected_paths.update(c.path for c in missing)
-                  have = len(node.children) - len(missing)
-                  emit(f"    重抓月 {mo} 精确补齐: 本地已有 {have}/{len(node.children)} 项，"
-                       f"补 {len(missing)}: {', '.join(c.name for c in missing)}")
-            else:
-              selected_paths.update(info["months"].get(mo, []))
-
-        if n_creators == 0:
-          emit("  (根下没有目录?)")
+        # 逐作者分道 + 重抓月精确补齐（重抓月展开要用页面，select_ops 返回后再关）
+        ops = await select_ops(link_page, tree, link, local, emit)
         await link_page.page.close()
 
         if show_tree:
           print(format_tree(tree))
         report.write(format_tree(tree) + "\n")   # 重抓月展开后的最终树
 
-        ops = build_save_plan(tree, want=lambda n: n.path in selected_paths,
-                              target_for=make_target_for(creator_roots))
         total_ops.extend((link["post_id"], op) for op in ops)
         report.write("--- save plan（目标 = 转存到自己网盘，镜像本地库布局）\n")
         report.write(format_plan(ops) + "\n")
