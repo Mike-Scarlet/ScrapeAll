@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scrape_all.sites.baidu_pan.save_plan import build_save_plan, format_plan
 from scrape_all.sites.baidu_pan.tree import EntryInfo, PanNode, walk_tree, format_tree
 from playground.bd_orchestrate_dryrun import (
-    POLICY, collect_creator_months, compute_targets,
+    make_policy, collect_creator_months, collect_months_under, compute_targets,
     month_covered_names, name_covered, find_node, make_target_for)
 
 # 假分享：year_nested + month_flat + 年份下散文件 三种结构混合
@@ -32,7 +32,8 @@ async def lister(path):
 
 
 async def main():
-    tree = await walk_tree(lister, POLICY, root_name="全部文件")
+    # ---- 策略形态一：local=None 全 walk（纯结构遍历，行为与旧 POLICY 相同）
+    tree = await walk_tree(lister, make_policy(), root_name="全部文件")
     print(format_tree(tree))
     print()
 
@@ -49,6 +50,37 @@ async def main():
           "| 跳过", d["skipped"], "| 本地独有", d["db_only"])
     sel, d = compute_targets(set(creators["NFFA"]["months"]), {"2025.01"})
     print("NFFA 散文件: 选中", sorted(sel), "| 重抓", d["resave"], "| 未覆盖", d["uncovered"])
+
+    # ---- 策略形态二：空 local -> 所有作者都是"新作者"，停在作者层（整目录单元）
+    tree2 = await walk_tree(lister, make_policy(local={}), root_name="全部文件")
+    for name in ("Mimu", "AS109", "NFFA"):
+        node = find_node(tree2, f"/{name}")
+        assert node is not None and node.is_leaf_unit(), name
+    assert find_node(tree2, "/Mimu/2025") is None          # 年份层没进去
+    assert collect_months_under(find_node(tree2, "/Mimu"))["months"] == {}
+    print("空 local: 全部作者停在作者层 ok")
+
+    # ---- 策略形态三：混合 —— 已匹配作者照常 walk，未匹配停在作者层
+    local = {"as109": ("AS109", "[yejiang]/AS109", {"2025.01", "2025.05"}, {})}
+    tree3 = await walk_tree(lister, make_policy(local=local), root_name="全部文件")
+    assert find_node(tree3, "/AS109/2025-01") is not None and \
+        find_node(tree3, "/AS109/2025-01").is_leaf_unit()
+    assert find_node(tree3, "/Mimu").is_leaf_unit()
+    assert find_node(tree3, "/NFFA").is_leaf_unit()
+    print("混合 local: AS109 walk 到月份层，Mimu/NFFA 停在作者层 ok")
+
+    # ---- 主流程选择模拟：新作者整目录 + 已匹配作者增量
+    selected = {"/Mimu", "/NFFA", "/AS109/2025.5.25【万由里 4】"}
+    ops = build_save_plan(tree3, want=lambda n: n.path in selected,
+                          target_for=make_target_for(
+                              {"AS109": "/转存待定/[yejiang]/AS109"}))
+    assert ops[0].source_dir == "/" and ops[0].names == ["Mimu", "NFFA"]
+    assert ops[0].target_dir == "/转存待定/[yejiang]"      # 新作者整目录 -> [yejiang]/<名>
+    assert ops[1].source_dir == "/AS109" and \
+        ops[1].names == ["2025.5.25【万由里 4】"]
+    assert ops[1].target_dir == "/转存待定/[yejiang]/AS109"
+    print("新作者整目录 + 已匹配增量计划 ok:")
+    print(format_plan(ops))
 
     # ---- 重抓月精确补齐：名字覆盖集合 / 树节点查找
     covered = month_covered_names([
@@ -87,13 +119,12 @@ async def main():
     print("精确补齐计划 ok:")
     print(format_plan(ops))
 
-    # ---- 目标映射：已匹配镜像 rel_path；未匹配直接落转存根（作者层去掉）
-    tgt = make_target_for({"AS109": "/转存待定/[yejiang]/AS109", "Mimu": "/转存待定"})
+    # ---- 目标映射：已匹配镜像 rel_path；未登记作者兜底带名落 [yejiang]
+    tgt = make_target_for({"AS109": "/转存待定/[yejiang]/AS109"})
     assert tgt("/AS109") == "/转存待定/[yejiang]/AS109"
     assert tgt("/AS109/2025-01") == "/转存待定/[yejiang]/AS109/2025-01"
-    assert tgt("/Mimu/2025") == "/转存待定/2025"        # 未匹配：根替换作者层
-    assert tgt("/NFFA/2025") == "/转存待定/2025"         # 没登记的作者同样落根
-    assert tgt("/") == "/转存待定"
+    assert tgt("/NFFA/2025") == "/转存待定/[yejiang]/NFFA/2025"
+    assert tgt("/") == "/转存待定/[yejiang]"
     print("make_target_for ok")
 
 

@@ -2,16 +2,17 @@
 
 流程：
   1. 从 cangku.db 取 stat=2 帖子的百度盘分享链接
-  2. Playwright 打开分享，walk 目录树 —— 策略：到父节点是年份即可
-     （年份目录展开一级；月份 token 目录为整体单元；month_flat 平铺结构同样停在月份层）
-  3. 对比 local_library.db 的 downloaded_months（{月份: [该月本地相对路径...]}）：
-     转存目标 = 最后一个已抓取的月份（防当月没抓完） + 其他未覆盖的月份
-  4. 重抓月精确补齐：本地路径给出该月已有内容的名字，把该月的目录单元在分享里
+  2. Playwright 打开分享，只列根目录分作者，然后按作者分道：
+     - 本地库无记录（新作者）-> 没有增量的意义：walk 在作者层即停，
+       整目录作为一次转存单元（也不进年份/月份层，快）
+     - 已有记录 -> walk 到父节点是年份即可（年份目录展开一级，月份 token 目录
+       为整体单元；month_flat 平铺结构同样停在月份层），做增量对比：
+       转存目标 = 最后一个已抓取的月份（防当月没抓完） + 其他未覆盖的月份
+  3. 重抓月精确补齐：本地路径给出该月已有内容的名字，把该月的目录单元在分享里
      展开一层，只挑本地没有的子项（同名视为已有；"xx new.mp4" 这类改名新版会选中）；
      全都在 -> 该月已完整，不重抓。展开失败回退整月转存。
-  5. 打印对比报告 + 转存计划（build_save_plan）。目标路径：已匹配作者镜像本地库
-     rel_path（TARGET_BASE/[yejiang]/作者/…，搬运回 NAS 零改名）；未匹配作者直接
-     落转存根目录 TARGET_BASE（作者层去掉，待人工确认后再归库）
+  4. 打印对比报告 + 转存计划（build_save_plan）。目标统一落 TARGET_BASE/[yejiang]/：
+     已匹配作者镜像本地库 rel_path（搬运回 NAS 零改名），新作者用分享侧作者名
 
 用法：
   python playground/bd_orchestrate_dryrun.py --ids 225896,216571   # 指定帖子 id
@@ -76,10 +77,26 @@ def stop_at_year_level(ctx: FolderCtx):
   return None
 
 
-POLICY = chain(
-    skip("保存资源自動領取優惠卷*"),   # 广告目录剔除（与 walk_share.py 一致）
-    stop_at_year_level,
-)
+def make_policy(local: dict = None, box_title: str = ""):
+  """walk 策略工厂（按链接构造）。
+
+  - 广告目录剔除（与 walk_share.py 一致）
+  - 未匹配作者（local 给出，且目录名/box_title/别名都找不到）在作者层即停：
+    整目录作为转存单元，不往里 walk —— 新作者反正要全转存，月份粒度没有意义
+  - 已匹配作者走 stop_at_year_level（年份展开一级，月份为整体单元）
+  local 为 None 时不做作者层判断（自测/纯结构 walk 用）。
+  """
+  def stop_if_new_creator(ctx: FolderCtx):
+    if ctx.depth == 1 and local is not None:
+      if resolve_local(ctx.name, box_title, local)[0] is None:
+        return WalkAction.STOP
+    return None
+
+  return chain(
+      skip("保存资源自動領取優惠卷*"),
+      stop_if_new_creator,
+      stop_at_year_level,
+  )
 
 
 # ---------------------------------------------------------------- 纯逻辑：树 -> 作者月份
@@ -96,35 +113,40 @@ def share_month_of(name: str):
     mo = month_of(name.rsplit(".", 1)[0])
   return mo
 
-def collect_creator_months(root: PanNode):
-  """walk 后的树 -> {creator: {"months": {月份: [节点路径...]}, "odd": [异常节点名]}}
+def collect_months_under(node: PanNode):
+  """单个作者子树 -> {"months": {月份: [节点路径...]}, "odd": [异常节点名]}
 
   月份来源：月份 token 的目录单元（year_nested/month_flat 皆是），以及带日期前缀的散文件。
   odd：年份目录下不是月份 token 的目录（结构异常，只报告）。
+  新作者被策略停在作者层时 children 为 None，months 为空（不参与增量对比）。
   """
+  info = {"months": {}, "odd": []}
+
+  def rec(n: PanNode):
+    for ch in n.children or []:
+      mo = share_month_of(ch.name)
+      if ch.is_dir:
+        if ch.is_leaf_unit():
+          if mo:
+            info["months"].setdefault(mo, []).append(ch.path)
+          elif n.depth >= 2:   # 年份下的非月份目录才算异常，作者层的说明文件不算
+            info["odd"].append(ch.path)
+        else:
+          rec(ch)
+      else:
+        if mo:                    # 带日期的散文件也算"网盘里有这个月"
+          info["months"].setdefault(mo, []).append(ch.path)
+
+  rec(node)
+  return info
+
+
+def collect_creator_months(root: PanNode):
+  """walk 后的树 -> {creator: {"months":…, "odd":…}}（顶层目录逐个，自测用）"""
   creators = {}
   for c in root.children or []:
-    if not c.is_dir:
-      continue
-    info = {"months": {}, "odd": []}
-    creators[c.name] = info
-
-    def rec(node: PanNode):
-      for ch in node.children or []:
-        mo = share_month_of(ch.name)
-        if ch.is_dir:
-          if ch.is_leaf_unit():
-            if mo:
-              info["months"].setdefault(mo, []).append(ch.path)
-            elif node.depth >= 2:   # 年份下的非月份目录才算异常，作者层的说明文件不算
-              info["odd"].append(ch.path)
-          else:
-            rec(ch)
-        else:
-          if mo:                    # 带日期的散文件也算"网盘里有这个月"
-            info["months"].setdefault(mo, []).append(ch.path)
-
-    rec(c)
+    if c.is_dir:
+      creators[c.name] = collect_months_under(c)
   return creators
 
 
@@ -184,15 +206,16 @@ def make_target_for(creator_roots: dict):
   creator_roots = {分享侧作者名: 目标根}：
     已匹配作者 -> TARGET_BASE/本地 rel_path（[yejiang]/作者/…），层级不变，
                  转存后搬运回 NAS 是纯复制零改名
-    未匹配作者 -> TARGET_BASE 本身（直接落转存根目录，作者层去掉），
-                 待人工确认后再归库
+    未匹配作者 -> 兜底 TARGET_BASE/<分享侧作者名>（正常走根级 op，见下）
+  根级 op（"/"，只会在全转存新作者时出现）-> TARGET_BASE/[yejiang]，
+  即所有内容统一落 [yejiang] 下。
   """
   def target(source_dir: str) -> str:
     stripped = source_dir.strip("/")
     if not stripped:
-      return TARGET_BASE
+      return f"{TARGET_BASE.rstrip('/')}/[yejiang]"
     first, _, rest = stripped.partition("/")
-    root = creator_roots.get(first) or TARGET_BASE
+    root = creator_roots.get(first) or f"{TARGET_BASE.rstrip('/')}/[yejiang]/{first}"
     return f"{root}/{rest}" if rest else root
   return target
 
@@ -228,21 +251,6 @@ def resolve_local(creator: str, box_title: str, local: dict):
     if mapped and mapped.casefold() in local:
       return local[mapped.casefold()], f"别名表 {cand!r}->{mapped!r}"
   return None, None
-
-
-def suggest_creators(share_months: set, local: dict, top_n=3):
-  """未命中时的建议：按月份重合度猜本地库作者（只建议，不自动采用）。
-
-  门槛：重合 >= 10 个月且 >= 60% 本地月份 —— 低于此基本是"近期月份撞车"的噪音
-  （实测 Dim vs はれ 50%、NFFA vs セネト 59% 都是噪音；harechippai vs はれ 98% 是真命中）。
-  """
-  scored = []
-  for _cf, (name, _rel, months, _mp) in local.items():
-    overlap = len(share_months & months)
-    if overlap >= 10 and overlap / max(1, len(months)) >= 0.6:
-      scored.append((overlap, name))
-  scored.sort(reverse=True)
-  return [f"{name} (重合 {n} 个月)" for n, name in scored[:top_n]]
 
 
 # ---------------------------------------------------------------- 数据库读取
@@ -344,11 +352,12 @@ async def main():
         # open + walk 整体重试一次（实测偶发 30s open 超时、walk 中途页面状态丢失）
         tree = None
         link_page = None
+        policy = make_policy(local, link["box_title"])
         for attempt in (1, 2):
           try:
             link_page = await SharedLinkPage.open(session.context, link["url"],
                                                   password=link["pwd"])
-            tree = await ShareWalker(link_page).walk(POLICY)
+            tree = await ShareWalker(link_page).walk(policy)
             break
           except Exception as e:
             msg = f"{type(e).__name__}: {e}"
@@ -365,36 +374,32 @@ async def main():
         if tree is None:
           continue
 
-        creators = collect_creator_months(tree)
-        if not creators:
-          emit("  (根下没有目录?)")
-          await link_page.page.close()
-          continue
-
-        # 聚合本链接内每个作者的选中月份；重抓月精确补齐要用页面，处理完再关
+        # 逐作者分道：未匹配 -> 整目录单元全转存（walk 已停在作者层）；
+        # 已匹配 -> 增量对比 + 重抓月精确补齐（要用页面，处理完再关）
         selected_paths = set()
         creator_roots = {}          # 分享侧作者名 -> 转存目标根（镜像本地 rel_path）
-        for creator, info in creators.items():
-          share_months = set(info["months"])
+        n_creators = 0
+        for c in tree.children or []:
+          if not c.is_dir:
+            continue
+          n_creators += 1
+          creator = c.name
           db, how = resolve_local(creator, link["box_title"], local)
-          selected, detail = compute_targets(share_months, db[2] if db else None)
-          month_paths = db[3] if db else {}
 
-          if db and db[1]:
-            creator_roots[creator] = f"{TARGET_BASE.rstrip('/')}/{db[1]}"
-          else:
-            creator_roots[creator] = TARGET_BASE.rstrip("/")   # 未匹配：直接落转存根
+          if db is None:
+            emit(f"  作者 {creator}  [本地库无记录 -> 整目录全转存（不 walk）]")
+            selected_paths.add(c.path)
+            continue
 
-          if db:
-            emit(f"  作者 {creator}  [本地库 {db[0]}（{db[1]}），{len(db[2])} 个月，"
-                 f"最后抓取 {max(db[2])}；匹配: {how}]")
-          else:
-            line = f"  作者 {creator}  [本地库无记录 -> 按新作者处理，全部转存]"
-            sug = suggest_creators(share_months, local)
-            if sug:
-              line += f"  疑似别名: {'; '.join(sug)}"
-            emit(line)
+          creator_roots[creator] = (f"{TARGET_BASE.rstrip('/')}/{db[1]}" if db[1]
+                                    else f"{TARGET_BASE.rstrip('/')}/[yejiang]/{creator}")
+          info = collect_months_under(c)
+          share_months = set(info["months"])
+          selected, detail = compute_targets(share_months, db[2])
+          month_paths = db[3]
 
+          emit(f"  作者 {creator}  [本地库 {db[0]}（{db[1]}），{len(db[2])} 个月，"
+               f"最后抓取 {max(db[2])}；匹配: {how}]")
           emit(f"    分享有 {len(share_months)} 个月: {fmt_months(sorted(share_months))}")
           emit(f"    转存 {len(selected)} 个月"
                + (f"（重抓最后月 {detail['resave']}）" if detail["resave"] else "")
@@ -408,7 +413,7 @@ async def main():
             emit(f"    !! 结构异常目录(不选): {info['odd']}")
 
           for mo in selected:
-            if db and mo == detail.get("resave") and month_paths.get(mo) is not None:
+            if mo == detail.get("resave") and month_paths.get(mo) is not None:
               # 重抓月精确补齐：本地路径已知该月有什么 -> 只挑本地没有的子项
               covered = month_covered_names(month_paths[mo])
               for upath in info["months"].get(mo, []):
@@ -441,6 +446,8 @@ async def main():
             else:
               selected_paths.update(info["months"].get(mo, []))
 
+        if n_creators == 0:
+          emit("  (根下没有目录?)")
         await link_page.page.close()
 
         if show_tree:
