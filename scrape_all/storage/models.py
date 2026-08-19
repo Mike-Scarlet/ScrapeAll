@@ -25,6 +25,36 @@ class PostItem:
 
 
 @PySQLModel(initialize_fields=True)
+class EroTopicItem:
+  """eroscripts topic 记录（discourse），topic_id 主键去重
+  （/t/<slug>/<id> 的 slug 随标题改名会变，不以 url 为键）
+
+  stat 生命周期（topic 被回复顶起 -> bumped_at 变新 -> 重置为 0 重走全程）：
+    0 = discovered  已发现（仅列表 meta：url/标题/作者/标签/时间戳）
+    1 = fetched     topic 页已抓取保存
+    2 = parsed      已解析（工况内，links 已写入）
+    3 = consumed    解析结果已交后续流程处理（终态）
+    4 = out_of_scope 解析过滤判定工况外（终态）
+    5 = deferred    解析跑过但结构超规：挂起，规则补全后重试
+    -1 = fetch 失败   -2 = parse 失败
+  """
+  topic_id: int = Field(primary_key=True)
+  url: str = Field(not_null=True)
+  title: str = Field(not_null=True)
+  author: str = Field(not_null=True, default="")
+  created_at: str = Field(not_null=True, default="")   # 归一化 UTC ISO 文本
+  bumped_at: str = Field(not_null=True, default="")    # 归一化 UTC ISO 文本，增量比较用
+  tags_json: str = Field(not_null=True, default="")    # ["loli", "straight", ...]
+  category_id: int = Field(not_null=True, default=0)
+  posts_count: int = Field(not_null=True, default=0)
+  views: int = Field(not_null=True, default=0)
+  stat: int = Field(not_null=True, default=0)
+  links_json: str = Field(not_null=True, default="")   # 解析后链接清单 json（后续阶段写入）
+  first_seen: float = Field(not_null=True)
+  last_seen: float = Field(not_null=True)
+
+
+@PySQLModel(initialize_fields=True)
 class ScrapeMeta:
   """抓取元信息 kv（history_done 回填完成标志等）"""
   key: str = Field(primary_key=True)

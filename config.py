@@ -13,6 +13,12 @@ CANGKU_FORCE_IDS = (
     "225885",   # 作者漏挂分类，但帖子/下载区正常，人工确认要
 )
 
+# eroscripts scrape（discourse，站内 JSON 走 playwright 登录态页内 fetch）
+EROS_PROXY_SERVER = None
+EROS_TAG_URL = "https://discuss.eroscripts.com/tag/loli/68"
+EROS_HISTORY_CUTOFF = "2026-03-01"   # bumped_at 下界（含该时刻）
+EROS_PAGE_LIMIT = 100                # 翻页安全上限（正常应先触发 cutoff/空页停止）
+
 # baidu pan save
 BAIDU_SAVE_TARGET_PATH = "/bangumi/2510"
 
