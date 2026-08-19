@@ -1,6 +1,7 @@
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 from playwright.async_api import BrowserContext
 
@@ -24,13 +25,14 @@ class CollectResult:
 
 class TagCollector:
   def __init__(self, context: BrowserContext, tag_url: str, store: TopicStore,
-               cutoff_text: str, page_limit: int = 100):
+               cutoff_text: Optional[str], page_limit: int = 100):
     self.context = context
     self.tag_url = tag_url.rstrip("/")
     self.slug = tag_slug_from_url(self.tag_url)
     self.store = store
-    self.cutoff = parse_cutoff(cutoff_text)
-    if self.cutoff is None:
+    # cutoff_text=None 表示全量回填（无时间下界，翻到 tag 底/空页为止）
+    self.cutoff = parse_cutoff(cutoff_text) if cutoff_text else None
+    if cutoff_text and self.cutoff is None:
       raise ValueError(f"cutoff 无法解析: {cutoff_text!r}")
     self.page_limit = page_limit
 

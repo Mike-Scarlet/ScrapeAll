@@ -40,6 +40,14 @@ class ErosApi:
   async def get_tag_page(self, tag_url: str, page_no: int) -> dict:
     """取一页 tag 列表 JSON dict；重试耗尽抛 RuntimeError"""
     url = f"{tag_url}.json" if page_no <= 1 else f"{tag_url}.json?page={page_no}"
+    return await self.get_json(url)
+
+  async def get_topic(self, topic_id: int) -> dict:
+    """取 topic 页 JSON（/t/<id>.json，与 slug 改名无关）；语义同 get_json"""
+    return await self.get_json(f"{ErosDef.root_url}/t/{topic_id}.json")
+
+  async def get_json(self, url: str) -> dict:
+    """站内同源 GET 一个 .json，返回 dict；429 按 wait_seconds 退避，重试耗尽抛 RuntimeError"""
     last_err = ""
     for _ in range(ErosDef.request_retry):
       page = await self._ready_page()
@@ -74,7 +82,7 @@ class ErosApi:
       await self._reopen()
       await asyncio.sleep(5)
 
-    raise RuntimeError(f"eroscripts 列表页取数失败 {url}: {last_err}")
+    raise RuntimeError(f"eroscripts JSON 取数失败 {url}: {last_err}")
 
   async def _reopen(self):
     if self.page and not self.page.is_closed():

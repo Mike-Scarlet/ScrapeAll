@@ -126,8 +126,14 @@ class TopicStore:
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 
-  def pending_parse(self, include_deferred: bool = False) -> list[EroTopicItem]:
-    stats = [int(Stat.FETCHED)] + ([int(Stat.DEFERRED)] if include_deferred else [])
+  def pending_parse(self, include_deferred: bool = False,
+                    include_parsed: bool = False) -> list[EroTopicItem]:
+    """待解析：FETCHED（+DEFERRED 重试 / +PARSED 离线重分类，--reparse 用）"""
+    stats = [int(Stat.FETCHED)]
+    if include_deferred:
+      stats.append(int(Stat.DEFERRED))
+    if include_parsed:
+      stats.append(int(Stat.PARSED))
     marks = ",".join("?" for _ in stats)
     return self.db.QueryRecords(EroTopicItem, where=f"stat in ({marks})", params=tuple(stats))
 
@@ -152,6 +158,20 @@ class TopicStore:
     item = EroTopicItem(topic_id=topic_id, stat=int(Stat.OUT_OF_SCOPE))
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
+
+  def mark_out_of_scope_batch(self, topic_ids: Sequence[int]):
+    for topic_id in topic_ids:
+      item = EroTopicItem(topic_id=topic_id, stat=int(Stat.OUT_OF_SCOPE))
+      self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
+
+  def stat_counts(self) -> dict[int, int]:
+    """stat -> 数量，跑完汇报用"""
+    rows = self.db.RawSelectFieldFromTableWithReturnFieldName(EroTopicItem, ["stat"])
+    counts = {}
+    for row in rows:
+      counts[row["stat"]] = counts.get(row["stat"], 0) + 1
+    return counts
 
   def mark_consumed(self, topic_id: int):
     item = EroTopicItem(topic_id=topic_id, stat=int(Stat.CONSUMED))
