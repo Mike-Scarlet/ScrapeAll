@@ -21,6 +21,8 @@ class Stat(IntEnum):
   OUT_OF_SCOPE = 4  # 解析第一步过滤判定工况外（meta-label 无「动画」；终态）
   DEFERRED = 5      # 解析跑过但结构超出当前规则（如无合集卡）：挂起非失败，
                     # 规则补全后 --retry-deferred 重跑收编
+  SHARE_DEAD = 6    # consume 阶段打开分享即 share invalid：终态，作者更新帖
+                    # （collect 时间戳变化）会重置回 DISCOVERED 自然重试
   FETCH_FAILED = -1
   PARSE_FAILED = -2
 
@@ -138,8 +140,20 @@ class PostStore:
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 
+  def pending_consume(self) -> list[PostItem]:
+    """consume 阶段取队：已解析待转存的帖子（PARSED，links_json 已就绪）"""
+    return self.db.QueryRecords(PostItem, where="stat = ?", params=(int(Stat.PARSED),))
+
   def mark_consumed(self, url: str):
+    """转存成功或增量对比后全已覆盖：消费完成（终态）。帖子被作者更新时
+    upsert_posts 会重置回 DISCOVERED，重新走全程"""
     item = PostItem(url=url, stat=int(Stat.CONSUMED))
+    self.db.RecordFieldChanged(item, ["stat"])
+    self.db.Commit()
+
+  def mark_share_dead(self, url: str):
+    """分享链接已失效（打开即 share invalid）：终态；作者更新帖自然重置重试"""
+    item = PostItem(url=url, stat=int(Stat.SHARE_DEAD))
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 

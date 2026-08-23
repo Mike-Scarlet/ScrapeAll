@@ -1,16 +1,16 @@
 # 抓取链路现状 — cangku / eroscripts
 
-> 最后更新：2026-08-23（基于 git `6e51910`，数据为 `data/` 实库当日核对）
+> 最后更新：2026-08-24（consume 升包 + 存量补标当日，数据为 `data/` 实库核对）
 
 ## 0. 总览
 
 两条链路同构：**collect → fetch → parse 三阶段流水线，sqlite 状态机驱动**，每阶段独立入口、可中断重跑，stat 队列即任务队列。三阶段代码均已完成并各自全量跑过一轮，`history_done` 标志均已置位（增量模式就绪）。
 
-**共同的前沿边界：parse 产出（stat=2）之后的 consume 阶段未接线** —— CONSUMED(3) 状态定义了但无调用方，下游转存编排活在 `playground/` 未升包（详见第 4 节）。
+**cangku 的 consume 已接线**（2026-08-24，见第 1.7 节）：stat=2 队列已清空（35 帖 → 34 CONSUMED + 1 SHARE_DEAD），增量帖照常进队。**eroscripts 的 consume 仍在前沿**：下载基建 adapter 按序接入中（第 3 节），stat 2→3 无人调用。
 
 | 链路 | collect | fetch | parse | consume |
 |---|---|---|---|---|
-| cangku（yejiang 用户帖） | ✅ 全量回填完成 | ✅ 100 HTML 落盘 | ✅ 35 帖产出链接 | ❌ 未接线 |
+| cangku（yejiang 用户帖） | ✅ 全量回填完成 | ✅ 100 HTML 落盘 | ✅ 35 帖产出链接 | ✅ 已升包接线，存量清零 |
 | eroscripts（discourse loli tag） | ✅ 1800 topic 收齐 | ✅ 1154 JSON 落盘，0 失败 | ✅ 1152 帖产出链接 | ❌ 未开始 |
 
 ### stat 状态机（两条链路语义一致）
@@ -20,18 +20,19 @@
 | 0 | DISCOVERED | 列表 walk 出来，仅有列表 meta |
 | 1 | FETCHED | 详情页已抓取落盘（可离线重试） |
 | 2 | PARSED | 工况内，links_json 已写入 |
-| 3 | CONSUMED | 已交后续流程（终态）**—— 两边都无人调用** |
+| 3 | CONSUMED | 已交后续流程（终态）；**cangku 已有调用方**（转存成功或增量对比后全已覆盖） |
 | 4 | OUT_OF_SCOPE | 工况外（终态） |
 | 5 | DEFERRED | 结构超规挂起，非失败；`--retry-deferred` 收编 |
+| 6 | SHARE_DEAD | 分享链接已失效（打开即 share invalid，终态）；**仅 cangku 在用**，作者更新帖被 collect 重置回 0 自然重试 |
 | -1 / -2 | FETCH_FAILED / PARSE_FAILED | 两边实跑均为 0 |
 
 ## 1. cangku（cangku.moe / yejiang=309550 用户帖）
 
 **目标**：抓作者帖子 → 解析帖子页合集 box 里的百度网盘项 → 二维码解码出 pan 链接 → 供百度盘转存。
 
-### 1.1 数据现状（2026-08-23 实库）
+### 1.1 数据现状（2026-08-24 实库）
 
-- `data/cangku.db`（表 `PostItem`）：**100 帖 = 35 已解析(2) + 63 工况外(4) + 2 挂起(5)**，零失败
+- `data/cangku.db`（表 `PostItem`）：**100 帖 = 34 已消费(3) + 63 工况外(4) + 2 挂起(5) + 1 分享死链(6)**，零失败；stat=2 队列已清空（8-24 存量补标）
 - `history_done` 已置位（key `yejiang:309550:history_done`），增量跑遇已覆盖帖即停
 - 落盘：`data/cangku/posts/` 100 个帖子 HTML；`data/cangku/qr/` 58 张二维码原图（调试留档）
 - **挂起待收编**（规则补全后 `parse_posts.py --retry-deferred`）：
@@ -70,9 +71,20 @@
 
 ### 1.6 遗留
 
-1. stat 2→3 消费标记未接线（见第 4 节）
+1. ~~stat 2→3 消费标记未接线~~ → 已接线（1.7 节，2026-08-24）
 2. 2 个 deferred 帖待补规则收编
 3. cangku 有完整 store 单测（test_cangku_store.py），无缺口
+
+### 1.7 consume（2026-08-24 升包接线）
+
+原 playground 转存编排（bd_orchestrate*.py，8-18 已全量真跑验证过）升包：
+
+- **编排逻辑** `scrape_all/sites/baidu_pan/orchestrate.py`：分享根按作者分道（本地库无记录整目录全转存 / 已匹配作者 walk 到月份层增量对比：重抓最后月+未覆盖月，重抓月只补本地没有的子项）、CREATOR_ALIASES 别名表、`load_local_months` 装配；单测 `tests/test_baidu_pan_orchestrate.py`（9 例，断言迁自 _logic_selftest.py）
+- **入口** `scripts/consume_posts.py`：默认 dry-run（walk+选点+打印计划，不动 stat）；`--execute` 真跑（首个非空计划前输 yes，`--yes` 跳过）；`--smoke/--ids/--limit` 选帖。流水式逐链接执行，报告落 `data/consume_report.txt`
+- **stat 流转**（仅 --execute）：share invalid → 6；计划空（全已覆盖）或全 op 成功 → 3；打开/walk 失败（非死链）或部分 op 失败 → 保持 2 下轮重试
+- **SHARE_DEAD(6) 语义**：终态；作者更新帖 → collect 时间戳变化 → 重置回 0 重走全程，死链补偿（原 TODO 3）就此闭环，无需额外机制
+- **存量补标**（`playground/_mark_consumed_backlog.py`，证据链从 bd_full_real_run/bd_smoke 日志解析）：8-18 真跑成功的 33 帖 + 冒烟 219782 → 3，死链 225111（山含）→ 6；补标前备份 `data/db_backup/`
+- 已知取舍：部分失败帖重跑会把已成功 op 再转一遍（现接受重复，与升级前 --ids 手动补跑一致）
 
 ## 2. eroscripts（discuss.eroscripts.com / loli tag / Scripts 分类）
 
@@ -124,17 +136,13 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 - **待接入**（按序）：mega（208，139 folder / 69 file，folder 密钥在 hash）→ gdrive（6 条 drive.google.com；另有 7 条 docs.google.com 是 spreadsheets 不是文件，应重分类）→ workupload（17，11 /file/ + 6 /archive/，人机验证）
 - 验证入口：`scripts/probe_downloader.py`（只动 `data/eroscripts/files/_verify/`，不碰 stat 不建任务表）
 
-## 4. 共同前沿：consume 阶段（挂账 TODO）
+## 4. 共同前沿：consume 阶段
 
-出处：`playground/bd_orchestrate.py:18-28` 的 TODO 块 + `data`/`playground` 实况。转存编排（选点、按作者分道、逐链接流水执行、三级恢复）已在 playground 验证过真转存（bd_full_real_run 等日志），但未升包。
+**cangku 侧已完成**（1.7 节）：编排升包 + stat 2→3/6 流转 + 死链补偿闭环 + 存量清零。
 
-挂账三件事：
+**eroscripts 侧未开始**，现状：下载基建 adapter 按序接入（第 3 节），stat=2 的 1152 帖无人消费。cangku 定下的语义可复用：消费成功（或确认无需处理）→ 3；宿主侧确认死链（gofile/pixeldrain 判死）→ 单列状态（是否沿用 6 语义待定，下载场景死链量大，gofile 实测 ~74%）；部分失败留 2 重试。**粒度注意**：cangku 每帖恰 1 链接故帖子级够用；eroscripts 每帖多条链接（script/media/source/other），帖子级标记会因单条死链卡住整帖，届时需链接级记账（links_json 内嵌状态或新表）。
 
-1. **编排逻辑升包**：select_ops / make_policy / 执行编排从 `playground/bd_orchestrate*.py` 升进 `scrape_all.sites.baidu_pan`，scripts/ 出正式入口
-2. **stat 2→3 消费标记**：粒度（帖子级 or 链接级）、失败 op 是否阻止升级、死链帖留 2 还是单列 —— 待定。现状事实实现：dryrun 直接 SQL 读 cangku.db stat=2 的 links_json 做选点
-3. **死链补偿**：库内分享已被作者删的（已知：山含 225111）
-
-建议顺序：升包 → 消费标记语义定稿 → 死链补偿策略随标记一起落地。
+原出处（已随 cangku 升包解决）：`playground/bd_orchestrate.py:18-28` 的 TODO 块。
 
 ---
 
@@ -144,6 +152,7 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 python -m pytest scrape_all/tests        # 全部纯逻辑单测，不碰浏览器
 python data/_stat.py                     # cangku stat 分布 + fetch failed 列表
 python data/_check_links.py              # cangku 打印 stat=2 links
+python scripts/consume_posts.py          # cangku consume dry-run（不动 stat）
 python playground/_check_eros_db.py      # eroscripts 总量/stat/flags
 python playground/_check_eros_deferred.py # eroscripts 挂起帖及其链接
 ```

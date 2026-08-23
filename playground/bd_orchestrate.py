@@ -1,4 +1,6 @@
-"""百度网盘转存编排执行器（真跑）。
+"""百度网盘转存编排执行器（真跑）。【已升包，留档】
+正式入口 scripts/consume_posts.py（选点逻辑在 scrape_all/sites/baidu_pan/orchestrate.py，
+真跑含 stat 2->3/6 流转）；本文件不标 stat，勿再用于全量。2026-08-24。
 
 选点逻辑与 dry-run 完全共用（bd_orchestrate_dryrun.select_ops），
 执行链路复用 save_executor：跳来源目录 -> 按名勾选 -> 保存弹窗 ->

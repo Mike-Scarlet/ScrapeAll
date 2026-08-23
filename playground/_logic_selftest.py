@@ -1,4 +1,5 @@
-"""bd_orchestrate_dryrun 纯逻辑自测：不碰浏览器，用假树验证策略/收集/对比/精确补齐。"""
+"""bd_orchestrate_dryrun 纯逻辑自测：不碰浏览器，用假树验证策略/收集/对比/精确补齐。
+【已升包，留档】断言已搬至 scrape_all/tests/test_baidu_pan_orchestrate.py。2026-08-24。"""
 import asyncio
 import sys
 from pathlib import Path
