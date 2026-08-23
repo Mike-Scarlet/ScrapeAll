@@ -120,7 +120,8 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
   - `eros uploads`（站内脚本附件 2693 条）：discourse 附件带 attachment 头，probe 停站点根页同源 fetch（206 + content-disposition 拿到原始文件名和大小），download 走 direct_download；3 个 funscript 落盘，大小逐字节对上，内容校验为合法 funscript JSON（actions 数组在）
   - 踩坑记录：attachment URL 的 goto 会 net::ERR_ABORTED——这是"下载已开始"的正常信号，engine 里吞掉该错误由 expect_download 接手
   - `pixeldrain`（905 条主力，库内 /l 431、/d 259、/u 205、/api 1）：**页面流版，全链路验证通过**（2026-08-23 `_verify_pd_final`）。probe/download 都是开真实页面读渲染结果——文件页 title=文件名、`.stat` 文本=人读体积，title "404, …Not Found" 或 http 404/410 判死；download 在点击前做幂等检查（已存在直接 skipped 不点按钮），文件页点 `button.toolbar_button`、列表页点 `button[title*="zip archive"]` 整包 zip。最终验证 4 步全过：4 条已知链接探活全对（活文件拿到真名+体积、死链 404）、幂等 skipped、51MB mp4 真实点击下载落盘（51092113 字节）、列表按钮点击→下载事件→立刻 cancel。注意：`/api/file/{id}` 返回的是**文件本体**不是元信息 JSON（曾因此把 1.8GB 拉进流式读），按约定 adapter 不走 API
-- **待接入**（按序）：gofile（55，全部 /d/{id} 形态）→ mega（208，139 folder / 69 file，folder 密钥在 hash）→ gdrive（6 条 drive.google.com；另有 7 条 docs.google.com 是 spreadsheets 不是文件，应重分类）→ workupload（17，11 /file/ + 6 /archive/，人机验证）
+  - `gofile`（55 条，全部 /d/{id}）：**页面流版，全链路验证通过**（2026-08-23）。死链 http 仍 200，判死靠 SPA 渲染后 title `Content not found · Gofile`；活页文件行 `div.fm-row`、真名在 `button[data-action="item-menu"]` 的 aria-label、点 `button[data-action="download"]` 直接出下载事件（无广告中转）。固定 19 条验证：14 死 / 5 活（gofile 不活跃删内容，库内死亡率 ~74%）；真实下载 2 条小活链（5.3MB + 1.6MB 各 2 文件）落盘名体积全对，幂等复跑 skipped 零流量。渲染慢的页（>15s）判 unknown 不误判死，重试可解（4J4SjB 实例）
+- **待接入**（按序）：mega（208，139 folder / 69 file，folder 密钥在 hash）→ gdrive（6 条 drive.google.com；另有 7 条 docs.google.com 是 spreadsheets 不是文件，应重分类）→ workupload（17，11 /file/ + 6 /archive/，人机验证）
 - 验证入口：`scripts/probe_downloader.py`（只动 `data/eroscripts/files/_verify/`，不碰 stat 不建任务表）
 
 ## 4. 共同前沿：consume 阶段（挂账 TODO）
