@@ -1,5 +1,6 @@
 
 import asyncio
+import contextlib
 import os
 from urllib.parse import urlsplit
 
@@ -59,6 +60,12 @@ class DownloadEngine:
     """浏览器上下文（登录保证等场景直接用）"""
     return self._session.context
 
+  @contextlib.asynccontextmanager
+  async def slot(self):
+    """adapter 的整页浏览+点击流程（不走 park 页原语）：一样要过并发闸"""
+    async with self._sem:
+      yield
+
   async def _page_for(self, url: str,
                       park_url: str = None) -> tuple[Page, asyncio.Lock]:
     """拿一个停在 url 所在 origin 的页（复用），以及该页的操作锁。
@@ -85,8 +92,9 @@ class DownloadEngine:
       page, lock = await self._page_for(url, park_url)
       async with lock:
         return await page.evaluate(
-            """async (url) => {
+            """async ({url, timeoutMs}) => {
               const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), timeoutMs);
               try {
                 const resp = await fetch(url, {
                   credentials: "include", signal: ctrl.signal,
@@ -95,23 +103,34 @@ class DownloadEngine:
                 const h = {};
                 resp.headers.forEach((v, k) => h[k] = v);
                 const out = {status: resp.status, headers: h};
+                clearTimeout(timer);
                 ctrl.abort();   // 只要头，正文一字节都不要
                 return out;
               } catch (e) { return {status: 0, error: String(e)}; }
-            }""", url)
+            }""", {"url": url, "timeoutMs": int(timeout_s * 1000)})
 
-  async def fetch_json(self, url: str, timeout_s: float = 30.0):
-    """同源页内 fetch JSON（各家 API：pixeldrain list / gofile 等）"""
+  async def fetch_json(self, url: str, timeout_s: float = 30.0,
+                       park_url: str = None) -> dict:
+    """同源页内 fetch JSON（各家 API：pixeldrain / gofile 等）。
+    不抛 HTTP 错：成功 {status, body}，非 2xx {status, body:null}，
+    网络层失败 {status: 0, error}——调用方按状态码分流 dead/unknown"""
     async with self._sem:
-      page, lock = await self._page_for(url)
+      page, lock = await self._page_for(url, park_url)
       async with lock:
         return await page.evaluate(
-            """async (url) => {
-              const resp = await fetch(url, {credentials: "include",
-                                             headers: {Accept: "application/json"}});
-              if (!resp.ok) throw new Error("HTTP " + resp.status);
-              return await resp.json();
-            }""", url)
+            """async ({url, timeoutMs}) => {
+              const ctrl = new AbortController();
+              const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+              try {
+                const resp = await fetch(url, {credentials: "include",
+                                               headers: {Accept: "application/json"},
+                                               signal: ctrl.signal});
+                if (!resp.ok) return {status: resp.status, body: null};
+                const body = await resp.json();
+                clearTimeout(timer);
+                return {status: resp.status, body};
+              } catch (e) { return {status: 0, error: String(e)}; }
+            }""", {"url": url, "timeoutMs": int(timeout_s * 1000)})
 
   async def blob_download(self, url: str, dest_dir: str,
                           filename: str = None,
@@ -125,18 +144,25 @@ class DownloadEngine:
       async with lock:
         async with page.expect_download(timeout=timeout_s * 1000) as dl_info:
           err = await page.evaluate(
-              """async ({url, name}) => {
-                const resp = await fetch(url, {credentials: "include"});
-                if (!resp.ok) return "HTTP " + resp.status;
-                const blob = await resp.blob();
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = name;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                return "";
-              }""", {"url": url, "name": fallback_name})
+              """async ({url, name, timeoutMs}) => {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+                try {
+                  const resp = await fetch(url, {credentials: "include",
+                                                 signal: ctrl.signal});
+                  if (!resp.ok) return "HTTP " + resp.status;
+                  const blob = await resp.blob();
+                  clearTimeout(timer);
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = name;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  return "";
+                } catch (e) { return String(e); }
+              }""", {"url": url, "name": fallback_name,
+                     "timeoutMs": int(timeout_s * 1000)})
           if err:
             # 在 with 里抛，expect_download 的等待才会立刻取消而不是干等到超时
             raise DownloadError(f"页内 fetch 失败 {err}: {url}")

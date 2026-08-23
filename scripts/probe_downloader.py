@@ -38,16 +38,19 @@ def pick_links(host: str, limit: int) -> list[str]:
     ).fetchall()
   finally:
     con.close()
+  keys = {
+      "catbox": "catbox.moe",
+      "eros": "discuss.eroscripts.com/uploads/",
+      "pixeldrain": "pixeldrain.com",
+  }
+  key = keys[host]
   seen, out = set(), []
-  key = "catbox.moe" if host == "catbox" else "discuss.eroscripts.com"
   for (lj,) in rows:
     for l in json.loads(lj):
       url = l["url"]
       if url in seen:
         continue
-      if host == "catbox" and "catbox.moe" in url:
-        seen.add(url); out.append(url)
-      elif host == "eros" and "discuss.eroscripts.com/uploads/" in url:
+      if key in url:
         seen.add(url); out.append(url)
     if len(out) >= limit:
       break
@@ -74,7 +77,8 @@ async def verify(urls: list[str], do_download: bool):
       try:
         probe = await adapter.probe(engine, url)
         line = (f"[{i}/{len(urls)}] probe={probe.status} "
-                f"size={fmt_size(probe.size)} name={probe.filename} {probe.note}")
+                f"size={fmt_size(probe.size)} name={probe.filename} "
+                f"{'files=%d ' % len(probe.files) if probe.files else ''}{probe.note}")
         dl_status = ""
         if do_download and probe.status == "alive" \
             and (probe.size is None or probe.size <= MAX_DOWNLOAD_SIZE):
@@ -98,7 +102,8 @@ async def verify(urls: list[str], do_download: bool):
 async def main():
   sys.stdout.reconfigure(encoding="utf-8", errors="replace")
   ap = argparse.ArgumentParser(description="下载基建真链接验证")
-  ap.add_argument("--host", choices=("catbox", "eros"), help="从库里挑该 host 的链接")
+  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain"),
+                  help="从库里挑该 host 的链接")
   ap.add_argument("--url", action="append", help="直接指定链接（可多次）")
   ap.add_argument("--limit", type=int, default=3)
   ap.add_argument("--download", action="store_true",
