@@ -6,7 +6,7 @@
 
 两条链路同构：**collect → fetch → parse 三阶段流水线，sqlite 状态机驱动**，每阶段独立入口、可中断重跑，stat 队列即任务队列。三阶段代码均已完成并各自全量跑过一轮，`history_done` 标志均已置位（增量模式就绪）。
 
-**共同的前沿边界：parse 产出（stat=2）之后的 consume 阶段未接线** —— CONSUMED(3) 状态定义了但无调用方，下游转存编排活在 `playground/` 未升包（详见第 3 节）。
+**共同的前沿边界：parse 产出（stat=2）之后的 consume 阶段未接线** —— CONSUMED(3) 状态定义了但无调用方，下游转存编排活在 `playground/` 未升包（详见第 4 节）。
 
 | 链路 | collect | fetch | parse | consume |
 |---|---|---|---|---|
@@ -70,7 +70,7 @@
 
 ### 1.6 遗留
 
-1. stat 2→3 消费标记未接线（见第 3 节）
+1. stat 2→3 消费标记未接线（见第 4 节）
 2. 2 个 deferred 帖待补规则收编
 3. cangku 有完整 store 单测（test_cangku_store.py），无缺口
 
@@ -102,14 +102,27 @@
 
 ### 2.4 遗留
 
-1. stat=3 消费未开始（见第 3 节）
+1. stat=3 消费未开始（见第 4 节）
 2. 2 个 deferred 帖待人工过目收编
 3. **other 域名表不完整**：2506 条 other，头部是 patreon（555+80）、fantia（134）、sankakucomplex（132）、thehandy（128）、pixiv（119）、x.com（83）等 —— parse 结尾会打印 Top15 供补表，补完 `--reparse` 离线重分类
 4. store 层**无单测**（cangku 有 test_cangku_store.py，eroscripts 是唯一测试缺口）
 5. `-1/-2` 无专门 retry 参数（实跑 0 失败，暂无影响）
 6. `store.py:113` 注释过时（"首版只用到 collect"，实际 fetch/parse 已在用）
 
-## 3. 共同前沿：consume 阶段（挂账 TODO）
+## 3. 下载基建（scrape_all/downloader/，2026-08-23 起）
+
+eroscripts consume 的第一步：**逐家文件托管做单链接可信的 probe/download adapter，批量编排后置**。约定：所有取回走浏览器页（真实 Chrome 指纹 + browser_session/ 持久 profile 登录态 + DOWNLOADER_PROXY 代理），并发默认 1 串行（引擎级信号量 + origin 页级锁）；落盘名经 Windows 合法性清洗（非法字符替换、保留名前缀、截断保扩展名）。
+
+- **engine**（`scrape_all/downloader/engine.py`）三原语：`probe_headers`（同源页内 Range:0-0 探活，读到头即 abort 不下数据）、`blob_download`（同源页内 fetch→blob→浏览器下载事件，中小文件）、`direct_download`（goto 触发浏览器下载器，依赖 attachment 头，大文件流式落盘）。park 机制：goto commit 后立刻 window.stop() 停在目标 origin，防 inline 渲染白吞流量
+- **adapter 契约**（`adapters/base.py`）：`probe -> ProbeResult(alive/dead/needs_auth/paywall/unknown + 真名/大小/文件夹清单)`、`download -> DownloadResult(downloaded/dead/failed/skipped)`；Range 探活的 size 解析和 content-disposition 原始文件名解析是共用 helper
+- **已接入并真链接验证**：
+  - `catbox`：23 条库内链接探活 19 活 / 2 死（404 判死正确）/ 2 unknown（litter.catbox.moe 子域网络层整体取不动，不误判死）；8.5MB mp4 走 blob 真实落盘，magic bytes 合法
+  - `eros uploads`（站内脚本附件 2693 条）：discourse 附件带 attachment 头，probe 停站点根页同源 fetch（206 + content-disposition 拿到原始文件名和大小），download 走 direct_download；3 个 funscript 落盘，大小逐字节对上，内容校验为合法 funscript JSON（actions 数组在）
+  - 踩坑记录：attachment URL 的 goto 会 net::ERR_ABORTED——这是"下载已开始"的正常信号，engine 里吞掉该错误由 expect_download 接手
+- **待接入**（按序）：pixeldrain（905 条主力，/u /d /l 三形态，API 文档化）→ gofile（55）→ mega（208，folder 密钥在 hash）→ gdrive（13）→ workupload（17，人机验证）
+- 验证入口：`scripts/probe_downloader.py`（只动 `data/eroscripts/files/_verify/`，不碰 stat 不建任务表）
+
+## 4. 共同前沿：consume 阶段（挂账 TODO）
 
 出处：`playground/bd_orchestrate.py:18-28` 的 TODO 块 + `data`/`playground` 实况。转存编排（选点、按作者分道、逐链接流水执行、三级恢复）已在 playground 验证过真转存（bd_full_real_run 等日志），但未升包。
 

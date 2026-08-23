@@ -29,6 +29,7 @@ python scripts/probe_cangku.py     # cangku 解析探针：分类过滤 + 合集
 python scripts/pass_cdn_challenge.py # 手动过图床 Cloudflare 挑战（cf_clearance 存持久 profile，按域名各过一次）
 python scripts/scrape_yejiang.py    # cangku collect：翻用户帖子列表到 cutoff/已覆盖边界，新帖/更新帖落库（增量安全）
 python scripts/scrape_eroscripts.py # eroscripts 全流程：collect（tag 列表增量）-> fetch（Scripts 分类 topic JSON 落盘）-> parse（离线提取 script/media 链接落库）；--stage 可单跑，parse 加 --retry-deferred 收挂起帖
+python scripts/probe_downloader.py   # 下载基建真链接验证：--host catbox/eros 或 --url，probe + 小文件试下载（全走浏览器页 + DOWNLOADER_PROXY）
 python scripts/fetch_posts.py       # cangku fetch：待抓帖子页逐帖存 HTML 到本地（stat 0 -> 1/-1）
 python scripts/parse_posts.py       # cangku parse：本地 HTML -> 链接落库（1->2）、工况外（->4）、结构超规挂起（->5，加 --retry-deferred 连挂起帖重跑）
 python scripts/save_bangumi.py      # 批量转存 config.py 里的分享链接

@@ -20,6 +20,13 @@ EROS_HISTORY_CUTOFF = "2026-03-01"   # bumped_at 下界（含该时刻）；全�
 EROS_PAGE_LIMIT = 100                # 翻页安全上限（loli 全量实测 60 页，余量充足）
 EROS_CATEGORY_ID = 14                # 只要 Scripts 分类（14），其余工况外不抓
 
+# downloader（媒体/脚本文件下载基建，scrape_all/downloader/）
+# 全走浏览器页取回（真实指纹 + 持久 profile 登录态），吃同一份本地代理；
+# 并发默认 1 串行，adapter 逐家接入（catbox / eros uploads 已就绪）
+DOWNLOADER_PROXY_SERVER = "http://127.0.0.1:20080"
+DOWNLOADER_CONCURRENCY = 1
+DOWNLOADER_FILES_ROOT = "data/eroscripts/files"   # 相对仓库根；topic 级子目录在编排层定
+
 # baidu pan save
 BAIDU_SAVE_TARGET_PATH = "/bangumi/2510"
 
