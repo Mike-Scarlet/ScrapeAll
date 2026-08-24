@@ -43,6 +43,7 @@ def pick_links(host: str, limit: int) -> list[str]:
       "eros": "discuss.eroscripts.com/uploads/",
       "pixeldrain": "pixeldrain.com",
       "gofile": "gofile.io/d/",
+      "mega": "mega.nz/",
   }
   key = keys[host]
   seen, out = set(), []
@@ -103,7 +104,7 @@ async def verify(urls: list[str], do_download: bool):
 async def main():
   sys.stdout.reconfigure(encoding="utf-8", errors="replace")
   ap = argparse.ArgumentParser(description="下载基建真链接验证")
-  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile"),
+  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile", "mega"),
                   help="从库里挑该 host 的链接")
   ap.add_argument("--url", action="append", help="直接指定链接（可多次）")
   ap.add_argument("--limit", type=int, default=3)
