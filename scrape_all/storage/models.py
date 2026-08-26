@@ -63,6 +63,37 @@ class ScrapeMeta:
 
 
 @PySQLModel(initialize_fields=True)
+class EroLink:
+  """eroscripts consume 链接级状态（url 主键去重：同一 URL 跨 topic 共享一行、只下一次）
+
+  两层状态：probe_status 记探活证据，dl_status 记处置结果——topic 级 CONSUMED
+  判定只看 dl_status 是否全部终态。非终态只有 pending / failed（failed 且
+  retries 未耗尽时可重试；重试上限 1 次，共 2 次尝试，耗尽转 exhausted）。
+
+  dl_status 终态语义：
+    downloaded 已落盘 / skipped 明确跳过（source/other 类、paywall、幂等已存在）
+    dead 死链 / manual 等人工介入（needs_auth、无 adapter 的 host）
+    exhausted 自动流程重试耗尽放弃（与 manual 分开：不预期人看，仅盘点）
+  manual / exhausted 经人工渠道（scripts/ero_links.py set）可改任意合法状态，
+  改回 pending 会清零 retries 重走自动流程。
+  """
+  url: str = Field(primary_key=True)
+  host: str = Field(not_null=True, default="")
+  kind: str = Field(not_null=True, default="")        # script/media/source/other
+  probe_status: str = Field(not_null=True, default="pending")
+  probe_retries: int = Field(not_null=True, default=0)
+  meta_json: str = Field(not_null=True, default="")   # probe 快照：{filename,size,files}
+  dl_status: str = Field(not_null=True, default="pending")
+  dl_retries: int = Field(not_null=True, default=0)
+  dl_path: str = Field(not_null=True, default="")     # 落盘相对路径
+  dl_size: int = Field(not_null=True, default=0)
+  dl_note: str = Field(not_null=True, default="")
+  first_topic_id: int = Field(not_null=True, default=0)  # 首见 topic，溯源
+  probe_at: str = Field(not_null=True, default="")    # UTC ISO 文本
+  dl_at: str = Field(not_null=True, default="")       # UTC ISO 文本
+
+
+@PySQLModel(initialize_fields=True)
 class LibraryFolder:
   """local_library：NAS 已确认库（erodouga/creators/[4]confirmed）的作者文件夹镜像
 

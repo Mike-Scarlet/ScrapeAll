@@ -1,15 +1,16 @@
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum
 from typing import Optional, Sequence
+from urllib.parse import urlsplit
 
 from python_general_lib.database.sqlite3_wrap.multiple_models_sqlite_database import \
     MultipleModelsSQLiteDatabase
 
 from scrape_all.sites.eroscripts.history import TopicRef, parse_iso, to_iso
-from scrape_all.storage.models import EroTopicItem, ScrapeMeta
+from scrape_all.storage.models import EroLink, EroTopicItem, ScrapeMeta
 
 
 class Stat(IntEnum):
@@ -24,10 +25,29 @@ class Stat(IntEnum):
   PARSE_FAILED = -2
 
 
+# ---- 链接级状态（EroLink，consume 阶段） ----
+# probe_status：探活证据（与 downloader ProbeResult.status 同词表）
+PROBE_PENDING, PROBE_ALIVE, PROBE_DEAD = "pending", "alive", "dead"
+PROBE_NEEDS_AUTH, PROBE_PAYWALL, PROBE_UNKNOWN = "needs_auth", "paywall", "unknown"
+# dl_status：处置结果；非终态仅 pending / failed
+DL_PENDING, DL_FAILED = "pending", "failed"
+DL_DOWNLOADED, DL_SKIPPED, DL_DEAD = "downloaded", "skipped", "dead"
+DL_MANUAL, DL_EXHAUSTED = "manual", "exhausted"
+DL_FINAL = frozenset({DL_DOWNLOADED, DL_SKIPPED, DL_DEAD, DL_MANUAL, DL_EXHAUSTED})
+DL_ALL = DL_FINAL | {DL_PENDING, DL_FAILED}
+# 失败后允许重试 1 次（共 2 次尝试），仍失败转 exhausted（与 manual 分开：不预期人看）
+LINK_MAX_RETRY = 1
+
+
 def tag_slug_from_url(tag_url: str) -> str:
   """/tag/loli/68 -> loli（剥掉尾部的 tag id 后缀）"""
   parts = tag_url.rstrip("/").split("/")
   return parts[-2] if len(parts) >= 2 else tag_url
+
+
+def _now_iso() -> str:
+  """当前 UTC 时间，与 to_iso 同格式（naive、截断到秒）"""
+  return to_iso(datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 def history_done_key(tag_slug: str) -> str:
@@ -42,7 +62,7 @@ class TopicStore:
   stat 流转、回填标志。独立 db 文件，不与 cangku 混。"""
 
   def __init__(self, db_path: str):
-    self.db = MultipleModelsSQLiteDatabase(db_path, [EroTopicItem, ScrapeMeta])
+    self.db = MultipleModelsSQLiteDatabase(db_path, [EroTopicItem, EroLink, ScrapeMeta])
     self.db.Initiate()
 
   def __enter__(self) -> "TopicStore":
@@ -177,6 +197,179 @@ class TopicStore:
     item = EroTopicItem(topic_id=topic_id, stat=int(Stat.CONSUMED))
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
+
+  # ---- 链接级状态机（consume 阶段，EroLink） ----
+
+  @staticmethod
+  def _host_of(url: str) -> str:
+    """剥 www. 的 netloc（与 topic_parse / adapters.base.host_of 同规则，内联避免依赖方向纠缠）"""
+    netloc = urlsplit(url).netloc.lower()
+    return netloc[4:] if netloc.startswith("www.") else netloc
+
+  def upsert_links(self, topic_id: int, links: Sequence[dict],
+                   adapter_hosts: frozenset) -> int:
+    """parse 后登记链接。url 主键幂等：已存在的行不动状态（重跑 parse 不清进度），
+    新行按 kind / host 初始化处置：
+      source/other            -> skipped（非下载目标；other 将来跟内容站时人工渠道改回）
+      script/media 无 adapter -> manual（人工清单）
+      其余                    -> pending 走 probe/download 流水
+    返回新建行数。"""
+    existing = {row.url for row in self.db.QueryRecords(EroLink)}
+    new_items = []
+    for l in links:
+      url = (l or {}).get("url") or ""
+      if not url or url in existing:
+        continue
+      host = self._host_of(url)
+      kind = l.get("kind") or "other"
+      dl_status, note = DL_PENDING, ""
+      if kind in ("source", "other"):
+        dl_status = DL_SKIPPED
+        note = "source 流媒体出处，非下载目标" if kind == "source" else "other 内容站，跟否待决策"
+      elif host not in adapter_hosts:
+        dl_status = DL_MANUAL
+        note = "无 adapter，人工处理"
+      new_items.append(EroLink(
+          url=url, host=host, kind=kind, dl_status=dl_status, dl_note=note,
+          first_topic_id=topic_id))
+      existing.add(url)
+    if new_items:
+      self.db.InsertBatch(new_items, on_conflict="OR IGNORE")
+      self.db.Commit()
+    return len(new_items)
+
+  def pending_probe_links(self, limit: Optional[int] = None) -> list[EroLink]:
+    """待探活：pending，或 unknown 且重试未耗尽（LINK_MAX_RETRY 次内可再探）"""
+    rows = self.db.QueryRecords(EroLink, where=(
+        "probe_status = ? or (probe_status = ? and probe_retries <= ?)"),
+        params=(PROBE_PENDING, PROBE_UNKNOWN, LINK_MAX_RETRY))
+    return rows[:limit] if limit else rows
+
+  def pending_download_links(self, limit: Optional[int] = None) -> list[EroLink]:
+    """待下载：探活 alive 且 dl 未处理，或 failed 且重试未耗尽"""
+    rows = self.db.QueryRecords(EroLink, where=(
+        "probe_status = ? and (dl_status = ? or (dl_status = ? and dl_retries <= ?))"),
+        params=(PROBE_ALIVE, DL_PENDING, DL_FAILED, LINK_MAX_RETRY))
+    return rows[:limit] if limit else rows
+
+  def _require_link(self, url: str) -> EroLink:
+    row = self.db.QueryOne(EroLink, where="url = ?", params=(url,))
+    if row is None:
+      raise ValueError(f"链接未登记: {url}（须先 upsert_links）")
+    return row
+
+  def mark_probe(self, url: str, status: str, meta: Optional[dict] = None,
+                 note: str = ""):
+    """probe 结果落库并驱动处置状态：
+      alive -> 等下载；dead -> dl dead；needs_auth -> dl manual；paywall -> dl skipped；
+      unknown -> 重试计数 +1，超过上限转 exhausted。"""
+    row = self._require_link(url)
+    item = EroLink(url=url)
+    fields = ["probe_status", "probe_at"]
+    item.probe_status = status
+    item.probe_at = _now_iso()
+    if meta:
+      item.meta_json = json.dumps(meta, ensure_ascii=False)
+      fields.append("meta_json")
+    dl_status, dl_note = None, ""
+    if status == PROBE_DEAD:
+      dl_status, dl_note = DL_DEAD, note or "probe 判死"
+    elif status == PROBE_NEEDS_AUTH:
+      dl_status, dl_note = DL_MANUAL, note or "需登录，转人工"
+    elif status == PROBE_PAYWALL:
+      dl_status, dl_note = DL_SKIPPED, note or "paywall，明确放弃"
+    if status == PROBE_UNKNOWN:
+      item.probe_retries = row.probe_retries + 1
+      fields.append("probe_retries")
+      if item.probe_retries > LINK_MAX_RETRY:
+        dl_status, dl_note = DL_EXHAUSTED, note or "probe unknown 重试耗尽"
+    if dl_status is not None:
+      item.dl_status = dl_status
+      item.dl_note = dl_note
+      item.dl_at = _now_iso()
+      fields += ["dl_status", "dl_note", "dl_at"]
+    self.db.RecordFieldChanged(item, fields)
+    self.db.Commit()
+
+  def mark_download(self, url: str, status: str, path: str = "",
+                    size: int = 0, note: str = ""):
+    """download 结果落库：downloaded/skipped/dead/manual 直落；failed 重试计数 +1，
+    超过上限转 exhausted。"""
+    if status not in (DL_DOWNLOADED, DL_SKIPPED, DL_DEAD, DL_MANUAL, DL_FAILED):
+      raise ValueError(f"非法 download 状态: {status}")
+    self._require_link(url)
+    item = EroLink(url=url)
+    fields = ["dl_status", "dl_at"]
+    item.dl_status = status
+    item.dl_at = _now_iso()
+    if status == DL_FAILED:
+      row = self._require_link(url)
+      item.dl_retries = row.dl_retries + 1
+      fields.append("dl_retries")
+      if item.dl_retries > LINK_MAX_RETRY:
+        item.dl_status = DL_EXHAUSTED
+    if path:
+      item.dl_path, fields = path, fields + ["dl_path"]
+    if size:
+      item.dl_size, fields = size, fields + ["dl_size"]
+    if note:
+      item.dl_note, fields = note, fields + ["dl_note"]
+    self.db.RecordFieldChanged(item, fields)
+    self.db.Commit()
+
+  def set_link_status(self, url: str, dl_status: str, path: str = "",
+                      size: int = 0, note: str = ""):
+    """人工介入渠道（scripts/ero_links.py set 背后）：改任意合法 dl_status。
+    改回 pending 视为重走自动流程——dl_retries 清零，probe 侧若已 unknown 连带
+    重置（alive/dead 等探活证据保留）。path/size/note 不传不动。"""
+    if dl_status not in DL_ALL:
+      raise ValueError(f"非法 dl_status: {dl_status}（可选 {sorted(DL_ALL)}）")
+    row = self._require_link(url)
+    item = EroLink(url=url)
+    fields = ["dl_status", "dl_at"]
+    item.dl_status = dl_status
+    item.dl_at = _now_iso()
+    if dl_status == DL_PENDING:
+      item.dl_retries = 0
+      fields.append("dl_retries")
+      if row.probe_status == PROBE_UNKNOWN:
+        item.probe_status, item.probe_retries = PROBE_PENDING, 0
+        fields += ["probe_status", "probe_retries"]
+    if path:
+      item.dl_path, fields = path, fields + ["dl_path"]
+    if size:
+      item.dl_size, fields = size, fields + ["dl_size"]
+    if note:
+      item.dl_note, fields = note, fields + ["dl_note"]
+    self.db.RecordFieldChanged(item, fields)
+    self.db.Commit()
+
+  def topic_consume_state(self, topic_id: int) -> str:
+    """topic 是否可判 CONSUMED：'ready'（全部链接 dl 终态，或无链接）/ 'pending'
+    （还有非终态）/ 'unregistered'（links 未登记进 EroLink，编排须先 upsert）。"""
+    topic = self.db.QueryOne(EroTopicItem, where="topic_id = ?", params=(topic_id,))
+    if topic is None:
+      raise ValueError(f"topic 不存在: {topic_id}")
+    try:
+      urls = [(l or {}).get("url") or "" for l in json.loads(topic.links_json or "[]")]
+    except ValueError:
+      urls = []
+    urls = [u for u in urls if u]
+    if not urls:
+      return "ready"
+    marks = ",".join("?" for _ in urls)
+    rows = self.db.QueryRecords(EroLink, where=f"url in ({marks})", params=tuple(urls))
+    if len(rows) < len(set(urls)):
+      return "unregistered"
+    return "ready" if all(r.dl_status in DL_FINAL for r in rows) else "pending"
+
+  def link_status_counts(self) -> dict[str, int]:
+    """dl_status -> 数量，跑完汇报用"""
+    rows = self.db.RawSelectFieldFromTableWithReturnFieldName(EroLink, ["dl_status"])
+    counts: dict[str, int] = {}
+    for row in rows:
+      counts[row["dl_status"]] = counts.get(row["dl_status"], 0) + 1
+    return counts
 
   # ---- 元信息 ----
 
