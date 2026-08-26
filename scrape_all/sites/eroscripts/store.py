@@ -198,6 +198,17 @@ class TopicStore:
     self.db.RecordFieldChanged(item, ["stat"])
     self.db.Commit()
 
+  def pending_consume_topics(self, since: Optional[str] = None) -> list[EroTopicItem]:
+    """consume 队列：stat=PARSED 的帖子按 created_at 升序（最旧先吃）。
+    since：帖子时间下界 guard（'2026-04-01' 含当日；往后退就传更早的），
+    None = 全量。created_at 为空的帖子在设 guard 时被排除（无法定位先后）。"""
+    where, params = "stat = ?", (int(Stat.PARSED),)
+    if since:
+      where += " and created_at >= ?"
+      params += (since,)
+    rows = self.db.QueryRecords(EroTopicItem, where=where, params=params)
+    return sorted(rows, key=lambda r: r.created_at or "")
+
   # ---- 链接级状态机（consume 阶段，EroLink） ----
 
   @staticmethod

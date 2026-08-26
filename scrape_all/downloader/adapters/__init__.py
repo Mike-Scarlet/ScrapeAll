@@ -25,3 +25,11 @@ def adapter_for(url: str) -> HostAdapter | None:
     if adapter.matches(url):
       return adapter
   return None
+
+
+def all_hosts() -> frozenset:
+  """注册表当前覆盖的全部 host（EroLink 登记时判有无 adapter 用）"""
+  hosts: set = set()
+  for adapter in _ADAPTERS:
+    hosts |= adapter.hosts
+  return frozenset(hosts)

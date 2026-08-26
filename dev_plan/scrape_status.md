@@ -148,7 +148,7 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 
 **cangku 侧已完成**（1.7 节）：编排升包 + stat 2→3/6 流转 + 死链补偿闭环 + 存量清零。
 
-**eroscripts 侧**：链接级记账已落表（2026-08-24，EroLink——见第 3 节末，当时"届时需新表"的判断已兑现）。剩编排器：stat=2 的 1152 帖（去重 5987 链接：script 2701 / media 1219 / source 800 / other 1267）先 `upsert_links` 登记（零流量），再 probe → download 流水（对齐 cangku `consume_posts.py` 模式：dry-run 默认、`--execute` 才动 stat、流水式逐链接可断点重跑）。死链量大（gofile ~74%）由链接级 dead 终态吸收，不影响 topic 判定。
+**eroscripts 侧已完成编排器**（2026-08-26，`scripts/consume_links.py` + `scrape_all/sites/eroscripts/consume.py`）：帖子按 created_at **升序**流水（最旧先吃，guard `--since` 默认 2026-04-01，存量吃完往后退），**probe→download 同 phase**（判活立刻下载，无大小闸门——正式逻辑不设限，size 只记录不拦截）。单 pass：懒登记（unregistered 才 upsert，零流量幂等）→ url 去重进队 → **K worker 并发池**（默认 3，engine 全局闸同步放行，`slot()` 早年就留了口）→ 统一扫尾收口（选中帖链接全终态推 3）。unknown/failed 留重试窗口下一 pass 再试；连续 5 条异常跨 worker 撤队（totals.aborted，重跑续吃）；落盘 `J:\es_scrape\<first_topic_id>\` 真名。CLI：dry-run 默认（只懒登记+打印）／`--execute`（开工输 yes）／`--smoke`(最旧3)／`--limit`／`--ids`／`--concurrency`／`finalize`（人工处理后零流量扫尾收口）。放量实录：3+10+10+30 帖共 52 帖收口、143 下载（含 1561MB 用户包 zip）、11 死链、0 异常；J 盘 4.7GB。guard 内余 231 帖 826 链接（funscript 632/pixeldrain 161/mega 25）。编排器单测 20 例（fake adapter/engine 注入，含真并发重叠/跨帖去重/撤队留尾），全量 230 passed。
 
 原出处（已随 cangku 升包解决）：`playground/bd_orchestrate.py:18-28` 的 TODO 块。
 

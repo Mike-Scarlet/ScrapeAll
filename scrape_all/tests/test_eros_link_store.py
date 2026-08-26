@@ -27,6 +27,45 @@ def link(url, kind):
           "post_number": 1, "username": "u"}
 
 
+# ---- 取队：pending_consume_topics（consume 编排选帖） ----
+
+def test_pending_consume_topics_guard_order_stat(tmp_path):
+  with make_store(tmp_path) as store:
+    refs = [
+        TopicRef(topic_id=1, url="u1", title="t1",
+                 created_at="2026-05-10T00:00:00Z"),
+        TopicRef(topic_id=2, url="u2", title="t2",
+                 created_at="2026-03-31T23:59:59Z"),   # guard 前一天
+        TopicRef(topic_id=3, url="u3", title="t3",
+                 created_at="2026-04-01T00:00:00Z"),   # guard 当日，含
+        TopicRef(topic_id=4, url="u4", title="t4",
+                 created_at="2026-04-02T00:00:00Z"),
+    ]
+    store.upsert_topics(refs, now=1.0)
+    for t in (1, 2, 3, 4):
+      store.save_parsed(t, [])
+    # 全量无 guard：升序（03-31 < 04-01 < 04-02 < 05-10）
+    assert [t.topic_id for t in store.pending_consume_topics()] == [2, 3, 4, 1]
+    # guard：含当日、前一天的排除
+    assert [t.topic_id for t in store.pending_consume_topics(since="2026-04-01")] == [3, 4, 1]
+    # stat 限定：消费掉一个就出队
+    store.mark_consumed(3)
+    assert [t.topic_id for t in store.pending_consume_topics(since="2026-04-01")] == [4, 1]
+
+
+def test_pending_consume_topics_empty_created_at_excluded_by_guard(tmp_path):
+  with make_store(tmp_path) as store:
+    store.upsert_topics([
+        TopicRef(topic_id=1, url="u1", title="t1", created_at="2026-05-01T00:00:00Z"),
+        TopicRef(topic_id=2, url="u2", title="t2"),   # 无 created_at
+    ], now=1.0)
+    store.save_parsed(1, [])
+    store.save_parsed(2, [])
+    assert [t.topic_id for t in store.pending_consume_topics(since="2026-04-01")] == [1]
+    # 无 guard 时仍在（排最前，created_at 空串）
+    assert [t.topic_id for t in store.pending_consume_topics()] == [2, 1]
+
+
 # ---- upsert_links：登记与初始化 ----
 
 def test_upsert_links_initial_dl_status_by_kind_and_host(tmp_path):
