@@ -30,8 +30,10 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
   返回报告 dict：{new, updated, by_method, out_of_scope, anomalies, warnings}
     - 根下的候选：文件夹名解析出 (creator, folder_date, uploader) 且 uploader 匹配；
       结构彻底可解析才入库，否则记 out_of_scope（带原因），留给人工处理
-    - yejiang/ 下的作者夹：文件夹名即 creator（无日期），folder_date/original_name
-      以库内值为准（DB 维护），只刷新月份/结构/last_seen
+    - yejiang/ 下的作者夹：文件夹名即 creator（无日期）；
+      有库记录 -> folder_date/original_name 以库内值为准，只刷新月份/结构/last_seen；
+      无库记录（merge/人工并进来的新作者）-> 可解析则直接入库（folder_date 置空），
+      不可解析只报 anomaly 留人工
   （月份按 月份->夹内索引路径 落库，rel_path + 索引路径 = 库根全路径）
   """
   if now is None:
@@ -75,9 +77,6 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
       continue
     folder_key = f"{uploader}:{name}"
     row = store.get(folder_key)
-    if row is None:
-      report["anomalies"].append(f"{yejiang_dir}/{name}: 无库记录（先 scan 根目录再搬运？）")
-      continue
     if parse_top_name(name) is not None:
       report["anomalies"].append(f"{yejiang_dir}/{name}: 搬进来了但仍是带日期命名")
       continue
@@ -85,13 +84,27 @@ def scan(root: str, store: LibraryStore, uploader: str = "yejiang",
         list_entries(full), lambda rel: list_entries(os.path.join(full, rel)))
     if not sub.ok:
       # 已搬运的变工况外（人工动过结构）：保留库内旧值，只报告
-      report["anomalies"].append(f"{yejiang_dir}/{name}: 重扫不再可解析 " + "; ".join(sub.reasons))
+      if row is None:
+        # merge/人工并进来的新作者但结构解析不了：不入库，留人工归整后重扫
+        report["anomalies"].append(
+            f"{yejiang_dir}/{name}: 无库记录且不可解析（工况外，人工处理）: "
+            + "; ".join(sub.reasons[:2]))
+      else:
+        report["anomalies"].append(f"{yejiang_dir}/{name}: 重扫不再可解析 " + "; ".join(sub.reasons))
       continue
-    state = store.upsert_folder(
-        folder_key=folder_key, creator=row.creator, uploader=row.uploader,
-        original_name=row.original_name, rel_path=f"{yejiang_dir}/{name}",
-        folder_date=row.folder_date, parse_method=sub.parse_method,
-        month_index=sub.month_index, now=now)
+    if row is None:
+      # merge（算法/人工）并进来的新作者：无日期标记可取，folder_date 置空，
+      # 之后全靠库内维护；orchestrate 只读 creator/rel_path/downloaded_months
+      state = store.upsert_folder(
+          folder_key=folder_key, creator=name, uploader=uploader,
+          original_name=name, rel_path=f"{yejiang_dir}/{name}", folder_date="",
+          parse_method=sub.parse_method, month_index=sub.month_index, now=now)
+    else:
+      state = store.upsert_folder(
+          folder_key=folder_key, creator=row.creator, uploader=row.uploader,
+          original_name=row.original_name, rel_path=f"{yejiang_dir}/{name}",
+          folder_date=row.folder_date, parse_method=sub.parse_method,
+          month_index=sub.month_index, now=now)
     report["new" if state == "new" else "updated"] += 1
     report["by_method"][sub.parse_method] += 1
     report["warnings"].extend(f"{yejiang_dir}/{name}: {w}" for w in sub.reasons)

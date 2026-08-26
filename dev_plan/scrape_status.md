@@ -86,6 +86,12 @@
 - **存量补标**（`playground/_mark_consumed_backlog.py`，证据链从 bd_full_real_run/bd_smoke 日志解析）：8-18 真跑成功的 33 帖 + 冒烟 219782 → 3，死链 225111（山含）→ 6；补标前备份 `data/db_backup/`
 - 已知取舍：部分失败帖重跑会把已成功 op 再转一遍（现接受重复，与升级前 --ids 手动补跑一致）
 
+**consume 的人工后半程（下载→入库闭环，2026-08-24 首轮跑通）**：转存到网盘 `/扒/<日期>/` 后由人下载解压到 NAS `[3]extracted/[yejiang]/`，再两步并库：
+
+- `python scripts/local_library.py merge`：把 [3] 侧**结构可解析**的作者夹递归树合并进 `[4]confirmed/[yejiang]/<作者>/`（同卷 rename 瞬移、整目录高粒度搬、重名同尺寸跳过、异尺寸记冲突留人工、空目录壳自清、幂等可重跑）；**工况外作者原地不动留人工**（本轮 3 个：CunnyFunky 顶层「单部」系列夹 / Yakin 顶层 G、V 系列夹 / EatWalles 解压冲突目录 `2025(1)`——zip 内 `2025/25.11` 解压时撞本地 `2025` 被改名，内容即新增两月，[3] 侧 `2025/25.11` 是空壳）。另有 54 个重名同尺寸文件留在 [3]（[4] 已有同尺寸副本，纯冗余，人工确认后可删）
+- `python scripts/local_library.py scan`：刷新 local_library.db（首轮 46→50 记录，新作者 folder_date 置空；orchestrate 只读 creator/rel_path/downloaded_months 不受影响）。scan 已放宽：`[yejiang]/` 下无库记录但可解析的作者夹直接入库（原只报 anomaly）。已知噪音：2 位年月份 token 的假阳性（如 NFFA 收出 2010.06），对 orchestrate 无影响（分享侧不会出现这些月）
+- 下一轮 consume 的增量对比即以此 db 为准（29 位作者月份已含 2026）
+
 ## 2. eroscripts（discuss.eroscripts.com / loli tag / Scripts 分类）
 
 **目标**：loli tag 下 Scripts 分类（category_id=14）的 topic → 提取 funscript 脚本链接与媒体下载链接。
@@ -155,6 +161,8 @@ python -m pytest scrape_all/tests        # 全部纯逻辑单测，不碰浏览�
 python data/_stat.py                     # cangku stat 分布 + fetch failed 列表
 python data/_check_links.py              # cangku 打印 stat=2 links
 python scripts/consume_posts.py          # cangku consume dry-run（不动 stat）
+python scripts/local_library.py merge    # 下载解压产物 [3]->[4] 并库（默认 dry-run）
+python scripts/local_library.py scan     # 刷新 local_library.db（merge/人工处理后跑）
 python playground/_check_eros_db.py      # eroscripts 总量/stat/flags
 python playground/_check_eros_deferred.py # eroscripts 挂起帖及其链接
 ```

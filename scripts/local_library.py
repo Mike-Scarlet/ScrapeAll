@@ -10,16 +10,25 @@ logging.basicConfig(
   format="[%(asctime)s] %(message)s",
 )
 
-from scrape_all.local_library.move import build_plan, execute_plan, print_plan
+from scrape_all.local_library.merge import (
+  build_merge_plan, execute_merge, print_plan, prune_empty_dirs,
+)
+from scrape_all.local_library.move import build_plan, execute_plan, print_plan as print_move_plan
 from scrape_all.local_library.scan import scan
 from scrape_all.local_library.store import LibraryStore
-from config import LOCAL_LIBRARY_ROOT, LOCAL_LIBRARY_YEJIANG_DIR
+from config import (
+  LOCAL_EXTRACTED_ROOT, LOCAL_EXTRACTED_YEJIANG_DIR,
+  LOCAL_LIBRARY_ROOT, LOCAL_LIBRARY_YEJIANG_DIR,
+)
 
 # local_library 入口：NAS 库状态镜像 + yejiang 目录归整
 #   scan            扫描 [4]confirmed 下 yejiang 夹 -> data/local_library.db
 #                   （可解析的入库；工况外的只报告，人工处理）
 #   move            默认 dry-run 打印搬运计划；--confirm 交互确认后真搬：
 #                   "作者名 {YY.MM} [yejiang]" -> [yejiang]/作者名/（同卷 rename）
+#   merge           默认 dry-run 打印合并计划；--confirm（--yes 免交互）后真并：
+#                   [3]extracted/[yejiang]/作者/ -> [yejiang]/作者/ 递归树合并。
+#                   只碰结构可解析的作者夹，工况外的原地留人工；并完提示跑 scan
 # 搬运后文件夹名不再带日期，"上一次fetch最后时间"由库内 folder_date 维护。
 # 目标目录名 [yejiang] 带方括号：不匹配顶层命名规范，根扫描天然跳过它自己。
 
@@ -61,7 +70,7 @@ def cmd_move(args):
       print("库是空的，先跑: python scripts/local_library.py scan")
       return
     items = build_plan(LOCAL_LIBRARY_ROOT, LOCAL_LIBRARY_YEJIANG_DIR, folders)
-    print_plan(items, LOCAL_LIBRARY_ROOT)
+    print_move_plan(items, LOCAL_LIBRARY_ROOT)
     if not args.confirm:
       print("\ndry-run（未动任何东西）。确认无误后: python scripts/local_library.py move --confirm")
       return
@@ -75,6 +84,28 @@ def cmd_move(args):
       print(f"  failed: {f}")
 
 
+def cmd_merge(args):
+  src = os.path.join(LOCAL_EXTRACTED_ROOT, LOCAL_EXTRACTED_YEJIANG_DIR)
+  dst = os.path.join(LOCAL_LIBRARY_ROOT, LOCAL_LIBRARY_YEJIANG_DIR)
+  plans, report = build_merge_plan(src, dst)
+  n_todo, n_conflict = print_plan(plans, report, src, dst)
+  if not args.confirm:
+    print("\ndry-run（未动任何东西）。确认后: python scripts/local_library.py merge --confirm")
+    return
+  if not args.yes:
+    answer = input(f"\n将真搬 {n_todo} 个作者的条目（冲突 {n_conflict} 条不动），输入 yes 执行: ")
+    if answer.strip() != "yes":
+      print("未确认，退出")
+      return
+  result = execute_merge(plans)
+  pruned = sum(len(prune_empty_dirs(os.path.join(src, p.creator))) for p in plans)
+  print(f"\n=== merge done: renamed={result['renamed']} same={result['same']} "
+        f"failed={len(result['failed'])} pruned_empty_dirs={pruned}")
+  for f in result["failed"]:
+    print(f"  failed: {f}")
+  print("工况外的仍在原地，人工处理完后跑: python scripts/local_library.py scan")
+
+
 if __name__ == "__main__":
   ap = argparse.ArgumentParser(description="local_library：NAS 库状态镜像 + yejiang 归整")
   sub = ap.add_subparsers(dest="cmd", required=True)
@@ -82,5 +113,10 @@ if __name__ == "__main__":
   ap_move = sub.add_parser("move", help="搬运 yejiang 夹到 yejiang/作者名（默认 dry-run）")
   ap_move.add_argument("--confirm", action="store_true",
                        help="真执行（交互再确认一次）")
+  ap_merge = sub.add_parser("merge", help="合并 [3]extracted 下载产物到正式库（默认 dry-run）")
+  ap_merge.add_argument("--confirm", action="store_true",
+                        help="真执行（默认交互再确认一次）")
+  ap_merge.add_argument("--yes", action="store_true",
+                        help="跳过交互确认（脚本化用）")
   args = ap.parse_args()
-  {"scan": cmd_scan, "move": cmd_move}[args.cmd](args)
+  {"scan": cmd_scan, "move": cmd_move, "merge": cmd_merge}[args.cmd](args)

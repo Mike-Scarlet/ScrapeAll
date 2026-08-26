@@ -35,6 +35,9 @@ LOCAL_LIBRARY_ROOT = r"\\DS220plus\resource_storage\mike_scarlet\erodouga\creato
 # 搬运目标子目录（相对 root），搬进去后文件夹名只留作者名。
 # 注意带方括号：不匹配顶层命名规范（作者名 {日期} [上传者]），根扫描天然跳过它
 LOCAL_LIBRARY_YEJIANG_DIR = "[yejiang]"
+# 下载解压完成后的落点（[3]extracted）：consume 下载 -> 解压到这里 -> merge 并入正式库
+LOCAL_EXTRACTED_ROOT = r"\\DS220plus\resource_storage\mike_scarlet\erodouga\creators\[3]extracted"
+LOCAL_EXTRACTED_YEJIANG_DIR = "[yejiang]"
 
 BANGUMI_LINKS = [
     "https://pan.baidu.com/s/11MdxeBxy70cGuBcBmkGoow?pwd=4bs4",

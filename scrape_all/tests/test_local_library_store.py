@@ -123,10 +123,29 @@ def test_scan_moved_folder_refresh(tmp_path):
 
 def test_scan_yejiang_dir_orphan(tmp_path):
   root = make_tree(tmp_path)
-  (root / YJ_DIR / "X").mkdir(parents=True)   # 无库记录的孤儿夹
+  (root / YJ_DIR / "X").mkdir(parents=True)   # 无库记录的孤儿夹（空，解析不了）
   with make_store(tmp_path) as store:
     report = scan(str(root), store, yejiang_dir=YJ_DIR, now=1000.0)
     assert any("无库记录" in a for a in report["anomalies"])
+    assert store.get("yejiang:X") is None
+
+
+def test_scan_yejiang_orphan_parseable_inserts(tmp_path):
+  # merge（算法/人工）并进来的新作者：无库记录但可解析 -> 直接入库，
+  # folder_date 无日期标记可取，置空（后续靠库维护；orchestrate 不读它）
+  root = make_tree(tmp_path)
+  (root / YJ_DIR / "X" / "25.03 y").mkdir(parents=True)
+  with make_store(tmp_path) as store:
+    report = scan(str(root), store, yejiang_dir=YJ_DIR, now=1000.0)
+    assert report["new"] == 2            # 根下的 A + yejiang 下的 X
+    row = store.get("yejiang:X")
+    assert row.creator == "X" and row.folder_date == ""
+    assert row.rel_path == YJ_REL + "/X" and row.parse_method == "month_flat"
+    assert json.loads(row.content_json)["downloaded_months"] == {"2025.03": ["25.03 y"]}
+    # 重扫：变刷新，不重复插入
+    report = scan(str(root), store, yejiang_dir=YJ_DIR, now=2000.0)
+    assert report["new"] == 0 and report["updated"] == 2
+    assert store.get("yejiang:X").last_seen == 2000.0
 
 
 # ---- move：计划 + 执行 ----
