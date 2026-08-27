@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import TimeoutError as PWTimeoutError
 
 from scrape_all.downloader.adapters.base import (
-    DownloadResult, HostAdapter, ProbeResult,
+    DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
 from scrape_all.downloader.fsutil import sanitize_filename
 
@@ -81,6 +81,12 @@ async def _stat_sizes(page) -> list[int]:
   texts = await page.locator(".stat").all_inner_texts()
   sizes = [s for s in (parse_size_text(t) for t in texts) if s]
   return sizes
+
+
+def est_size_from_stats(sizes: list[int]) -> int | None:
+  """页面上能读到的下载体积估算：文件页=单个体积；列表页 .stat 是逐文件
+  体积，求和≈整包 zip 大小。读不到返回 None（等待超时退回地板值）"""
+  return sum(sizes) if sizes else None
 
 
 class PixeldrainAdapter(HostAdapter):
@@ -158,7 +164,9 @@ class PixeldrainAdapter(HostAdapter):
           return DownloadResult("failed", note=f"下载按钮未渲染: {page_url}")
 
         os.makedirs(dest_dir, exist_ok=True)
-        async with page.expect_download(timeout=60000) as dl_info:
+        # 列表 ZIP 是服务端现打包（事件要等打包开始才来），等待按体积放
+        est = est_size_from_stats(await _stat_sizes(page))
+        async with page.expect_download(timeout=dl_wait_ms(est, 60)) as dl_info:
           await btn.click()
         download = await dl_info.value
         dest = os.path.join(

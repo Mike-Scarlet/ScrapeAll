@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import TimeoutError as PWTimeoutError
 
 from scrape_all.downloader.adapters.base import (
-    DownloadResult, HostAdapter, ProbeResult,
+    DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
 from scrape_all.downloader.fsutil import sanitize_filename
 
@@ -45,7 +45,8 @@ _SIZE_TEXT_RE = re.compile(r"(?:^|\s)([\d.]+)\s*(B|KB|MB|GB|TB)(?:\s|$)", re.I)
 _SIZE_MULT = {"B": 1, "KB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4}
 _WAIT_MS = 20000           # SPA 判定 + 渲染上限（实测 10s 内出结果）
 _POLL_MS = 500
-_DL_WAIT_MS = 300000       # 页面内整文件拉完才出事件，5 分钟兜底
+_DL_WAIT_MS = 300000       # 下载事件等待地板：页面内整文件拉完才出事件，
+                           # 体积读得到时按 200KB/s 兜底网速放宽（见 base）
 
 
 def parse_mega_url(url: str) -> tuple[str, str] | None:
@@ -211,14 +212,15 @@ class MegaAdapter(HostAdapter):
         await page.close()
 
   async def _download_file(self, page, dest_dir: str) -> DownloadResult:
-    fname, _ = await self._read_file_header(page)
+    fname, size = await self._read_file_header(page)
     local = sanitize_filename(fname)
     dest = os.path.join(dest_dir, local)
     if os.path.exists(dest):
       return DownloadResult("skipped", path=dest, note=f"{local} 已存在")
+    wait_ms = dl_wait_ms(size, _DL_WAIT_MS / 1000)
     watchdog = asyncio.create_task(_sheet_watchdog(page))
     try:
-      async with page.expect_download(timeout=_DL_WAIT_MS) as dl_info:
+      async with page.expect_download(timeout=wait_ms) as dl_info:
         await page.locator(_FILE_DL_BTN).first.click()
         await _maybe_nag(page)
       dl = await dl_info.value
@@ -230,16 +232,21 @@ class MegaAdapter(HostAdapter):
           note=f"{os.path.basename(dest)}（页面内整文件拉取后落盘）")
     except PWTimeoutError as e:
       return DownloadResult(
-          "failed", note=f"下载事件超时 {_DL_WAIT_MS // 1000}s: {e}")
+          "failed", note=f"下载事件超时 {wait_ms // 1000}s: {e}")
     finally:
       watchdog.cancel()
 
   async def _download_folder_zip(self, page, dest_dir: str) -> DownloadResult:
+    # ZIP 打包前读行体积：整夹拉完才出事件，等待按总体积放（>850MB 的夹子
+    # 5 分钟地板根本兜不住）
+    est = sum(r["size"] or 0 for r in await _read_rows(page)
+              if not r["is_dir"]) or None
+    wait_ms = dl_wait_ms(est, _DL_WAIT_MS / 1000)
     await page.locator("button.fm-download").click()
     await page.locator(".fm-download-menu").wait_for(state="visible", timeout=8000)
     watchdog = asyncio.create_task(_sheet_watchdog(page))
     try:
-      async with page.expect_download(timeout=_DL_WAIT_MS) as dl_info:
+      async with page.expect_download(timeout=wait_ms) as dl_info:
         await page.locator(_ZIP_MENU_BTN).click()
         await _maybe_nag(page)
       dl = await dl_info.value
@@ -257,6 +264,6 @@ class MegaAdapter(HostAdapter):
           note=f"整夹 ZIP {suggested}（解压得原文件树）")
     except PWTimeoutError as e:
       return DownloadResult(
-          "failed", note=f"ZIP 下载事件超时 {_DL_WAIT_MS // 1000}s: {e}")
+          "failed", note=f"ZIP 下载事件超时 {wait_ms // 1000}s: {e}")
     finally:
       watchdog.cancel()

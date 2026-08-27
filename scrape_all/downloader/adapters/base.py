@@ -41,6 +41,28 @@ def filename_from_cd(headers: dict) -> str | None:
   return None
 
 
+# 下载等待超时按体积推算：200KB/s 兜底网速 + 启动余量，地板取调用方默认。
+# 起因 2026-08-26：catbox 185.6MB 走 blob 路径（页内 fetch 拉完全文件才出
+# 下载事件），120s 默认超时在并发抢代理带宽下直接掐死——超时罩着整个传输
+# 过程的路径（catbox blob、mega 页内拉取+解密）必须按体积放。
+DL_TIMEOUT_SPEED_BPS = 200 * 1024
+DL_TIMEOUT_HEADROOM_S = 60.0
+
+
+def timeout_for_size(size: int | None, base_s: float = 120.0) -> float:
+  """已知体积的下载等待超时（秒）：max(地板, 体积/200KBps + 60s 余量)。
+  未知体积返回地板。直链类路径（下载事件在开始时就来）放长了只是晚失败，
+  无副作用，所以各 adapter 统一用。"""
+  if not size or size <= 0:
+    return base_s
+  return max(base_s, size / DL_TIMEOUT_SPEED_BPS + DL_TIMEOUT_HEADROOM_S)
+
+
+def dl_wait_ms(size: int | None, base_s: float) -> int:
+  """expect_download 要的是毫秒"""
+  return int(timeout_for_size(size, base_s) * 1000)
+
+
 # 探活结果。status:
 #   alive      链接有效，元信息尽量填全
 #   dead       404/410 或平台明确报"文件不存在/已删除"

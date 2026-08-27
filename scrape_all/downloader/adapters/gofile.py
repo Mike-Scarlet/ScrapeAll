@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import TimeoutError as PWTimeoutError
 
 from scrape_all.downloader.adapters.base import (
-    DownloadResult, HostAdapter, ProbeResult,
+    DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
 from scrape_all.downloader.fsutil import sanitize_filename
 
@@ -165,7 +165,8 @@ class GofileAdapter(HostAdapter):
             continue          # 幂等：已存在就不点按钮（0 流量）
           btn = page.locator(_DL_BTN).nth(r["dl_index"])
           try:
-            async with page.expect_download(timeout=60000) as dl_info:
+            async with page.expect_download(
+                timeout=dl_wait_ms(r["size"], 60)) as dl_info:
               await btn.click()
             dl = await dl_info.value
             dest = os.path.join(

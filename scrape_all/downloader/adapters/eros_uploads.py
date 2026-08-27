@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult,
-    filename_from_cd, size_from_range_headers,
+    filename_from_cd, size_from_range_headers, timeout_for_size,
 )
 from scrape_all.downloader.fsutil import sanitize_filename
 
@@ -59,7 +59,8 @@ class ErosUploadsAdapter(HostAdapter):
       return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
                             note="已存在")
     try:
-      path = await engine.direct_download(url, dest_dir, filename=name)
+      path = await engine.direct_download(url, dest_dir, filename=name,
+                                          timeout_s=timeout_for_size(probe.size))
     except Exception as e:
       return DownloadResult("failed", note=str(e))
     size = os.path.getsize(path)

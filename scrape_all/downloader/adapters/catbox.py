@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult, size_from_range_headers,
+    timeout_for_size,
 )
 from scrape_all.downloader.fsutil import sanitize_filename
 
@@ -44,7 +45,10 @@ class CatboxAdapter(HostAdapter):
       return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
                             note="已存在")
     try:
-      path = await engine.blob_download(url, dest_dir, filename=name)
+      # blob 路径超时罩着页内 fetch 全程（整文件拉完才出下载事件），按 probe
+      # 拿到的体积放：185.6MB@200KB/s 兜底网速约 17 分钟
+      path = await engine.blob_download(url, dest_dir, filename=name,
+                                        timeout_s=timeout_for_size(probe.size))
     except Exception as e:
       return DownloadResult("failed", note=str(e))
     return DownloadResult("downloaded", path=path, size=os.path.getsize(path))
