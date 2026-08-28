@@ -35,6 +35,11 @@ from scrape_all.downloader.fsutil import sanitize_filename
 
 _DEAD_MARKS = ("无法访问该文件", "该文件夹不再可用", "此内容已被移除")
 _ROW_SEL = "a.mega-node.fm-item"
+# 公开夹有两种视图 DOM（2026-08 实测）：常规夹走 a.mega-node 行；根目录全是
+# 子文件夹的夹走网格表格 table.grid-table -> tr.megaListItem，前者选择器在
+# 后者页面一个都匹配不到——ready 判据两个都得认，否则 probe 误报 unknown
+_GRID_ROW_SEL = "table.grid-table tbody tr.megaListItem"
+_FOLDER_READY_SEL = f"{_ROW_SEL}, {_GRID_ROW_SEL}"
 _FILE_NAME_SEL = ".dl-header .fileinfo .filename .name"
 _FILE_EXT_SEL = ".dl-header .fileinfo .filename .ext"
 _FILE_SIZE_SEL = ".dl-header .fileinfo .size"
@@ -43,7 +48,8 @@ _ZIP_MENU_BTN = ".fm-download-menu button:has(.icon-download-zip)"
 _OK_BTN = "button:has-text('好的，明白了')"
 _SIZE_TEXT_RE = re.compile(r"(?:^|\s)([\d.]+)\s*(B|KB|MB|GB|TB)(?:\s|$)", re.I)
 _SIZE_MULT = {"B": 1, "KB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4}
-_WAIT_MS = 20000           # SPA 判定 + 渲染上限（实测 10s 内出结果）
+_WAIT_MS = 40000           # SPA 判定 + 渲染上限（实测 10s 内出结果；并发抢代理
+                           # 带宽时 folder 页更慢，20s 两连挂过，放宽到 40s）
 _POLL_MS = 500
 _DL_WAIT_MS = 300000       # 下载事件等待地板：页面内整文件拉完才出事件，
                            # 体积读得到时按 200KB/s 兜底网速放宽（见 base）
@@ -70,8 +76,35 @@ def parse_size_text(text: str) -> int | None:
     return None
 
 
+def grid_row(g: dict) -> dict | None:
+  """网格视图行（page.evaluate 原始结构）-> {id, name, size, is_dir}。
+  名字=第一个无类名且有文本的 td（实测名字列不带类）；体积/类型按 td 首类名
+  定位；is_dir 认 tr 类里的 folder token（td.type 文案「文件夹」兜底）。"""
+  def by_class(key: str) -> str:
+    return next((t["txt"] for t in g["tds"]
+                 if (t["cls"] or "").split()[:1] == [key]), "")
+  name = next((t["txt"] for t in g["tds"] if not t["cls"] and t["txt"]), "")
+  if not name:
+    return None
+  return {"id": g["id"], "name": name,
+          "size": parse_size_text(by_class("size")),
+          "is_dir": "folder" in (g["cls"] or "").split()
+                    or by_class("type") == "文件夹"}
+
+
+def zip_est_size(rows: list[dict]) -> int | None:
+  """整夹 ZIP 等待窗口的体积估算：直下文件体积和优先；根目录全是子目录的
+  夹（网格视图，直下 0 文件）用子目录体积和兜底——不兜的话 24GB 的 ZIP 会
+  走 300s 地板被活活掐死。都读不到体积返回 None（调用方走地板）。"""
+  files = sum(r["size"] or 0 for r in rows if not r["is_dir"])
+  if files:
+    return files
+  return sum(r["size"] or 0 for r in rows) or None
+
+
 async def _read_rows(page) -> list[dict]:
-  """读 folder 文件行：[{id, name, size, is_dir}]；空行/占位行跳过"""
+  """读 folder 文件行：[{id, name, size, is_dir}]；空行/占位行跳过。
+  先按常规视图读，一个没有再按网格视图读（两种 DOM 见 _GRID_ROW_SEL 注释）"""
   rows = await page.evaluate(
       """() => [...document.querySelectorAll('a.mega-node.fm-item')]
            .filter(a => a.id && a.getAttribute('title'))
@@ -86,7 +119,16 @@ async def _read_rows(page) -> list[dict]:
     out.append({"id": r["id"], "name": name,
                 "size": parse_size_text(r.get("title")),
                 "is_dir": bool(r.get("dir"))})
-  return out
+  if out:
+    return out
+  grid = await page.evaluate(
+      """() => [...document.querySelectorAll('tr.megaListItem')]
+           .filter(tr => tr.id)
+           .map(tr => ({id: tr.id, cls: tr.className,
+                       tds: [...tr.children].map(td => (
+                           {cls: td.className,
+                            txt: (td.innerText || '').trim()}))}))""")
+  return [r for r in (grid_row(g) for g in grid) if r]
 
 
 async def _sheet_watchdog(page):
@@ -125,7 +167,7 @@ class MegaAdapter(HostAdapter):
       await page.close()
       return "unknown", None, f"goto 失败: {e}"
     kind = (parse_mega_url(url) or ("", ""))[0]
-    ready_sel = _ROW_SEL if kind == "folder" else _FILE_NAME_SEL
+    ready_sel = _FOLDER_READY_SEL if kind == "folder" else _FILE_NAME_SEL
     deadline = asyncio.get_event_loop().time() + _WAIT_MS / 1000
     while asyncio.get_event_loop().time() < deadline:
       try:
@@ -238,9 +280,8 @@ class MegaAdapter(HostAdapter):
 
   async def _download_folder_zip(self, page, dest_dir: str) -> DownloadResult:
     # ZIP 打包前读行体积：整夹拉完才出事件，等待按总体积放（>850MB 的夹子
-    # 5 分钟地板根本兜不住）
-    est = sum(r["size"] or 0 for r in await _read_rows(page)
-              if not r["is_dir"]) or None
+    # 5 分钟地板根本兜不住；全是子目录的夹用地目录体积和，见 zip_est_size）
+    est = zip_est_size(await _read_rows(page))
     wait_ms = dl_wait_ms(est, _DL_WAIT_MS / 1000)
     await page.locator("button.fm-download").click()
     await page.locator(".fm-download-menu").wait_for(state="visible", timeout=8000)
