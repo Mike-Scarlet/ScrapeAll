@@ -26,7 +26,9 @@ from scrape_all.downloader.fsutil import sanitize_filename
 #         页内同源 fetch 整文件 -> blob -> objectURL 锚点点出下载事件 -> save_as。
 #         体积列是 N/A，等待按 content-length 放大（engine.blob_download 同款思路，
 #         但那个原语内部抢信号量，slot() 里调会死锁，故页内自实现）
-#   幂等   真名（download 属性 + 扩展名）先算好，已存在就不发起导航（0 流量）
+#   幂等   真名（download 属性 + 扩展名）先算好，已存在就不发起导航（0 流量）；
+#         同系列不同视频可能同名（站点就给一样的 download 属性），同夹撞名时
+#         以 {stem}.{vid}{ext} 区分出第二把，连后缀名都存在才算真重复
 #
 # 状态判定：跳登录页 -> needs_auth；http 404/410 -> dead；表格渲染不出 -> unknown
 # （死链页真实形态未标定，先保守不判死，真页验证后再收紧）。
@@ -115,6 +117,20 @@ def local_filename(row: dict, vid: str) -> str:
   return name
 
 
+def resolve_dest(dest_dir: str, name: str, vid: str) -> tuple[str, bool]:
+  """(落盘路径, 是否真重复)。站点会给同系列不同视频完全相同的 download 真名
+  （同帖归档同夹即撞名），撞名时以 {stem}.{vid}{ext} 区分出第二把；连
+  后缀名都已存在才算真重复（0 流量 skipped）。"""
+  dest = os.path.join(dest_dir, name)
+  if not os.path.exists(dest):
+    return dest, False
+  stem, ext = os.path.splitext(name)
+  alt = os.path.join(dest_dir, f"{stem}.{vid}{ext}")
+  if not os.path.exists(alt):
+    return alt, False
+  return dest, True
+
+
 class HanimeAdapter(HostAdapter):
   hosts = frozenset({"hanime1.me"})
 
@@ -188,10 +204,11 @@ class HanimeAdapter(HostAdapter):
         if not data_url.startswith("http"):
           return DownloadResult("failed", note=f"data-url 缺失: {best!r}")
 
-        # 幂等：真名先算好，已存在就不导航（0 流量）
+        # 幂等：真名先算好；同名撞车（同系列不同视频同名）以 vid 后缀区分，
+        # 只有 vid 后缀名也已存在才 0 流量 skipped
         name = local_filename(best, vid)
-        dest = os.path.join(dest_dir, sanitize_filename(name))
-        if os.path.exists(dest):
+        dest, exists = resolve_dest(dest_dir, sanitize_filename(name), vid)
+        if exists:
           return DownloadResult("skipped", path=dest, note="已存在")
 
         os.makedirs(dest_dir, exist_ok=True)

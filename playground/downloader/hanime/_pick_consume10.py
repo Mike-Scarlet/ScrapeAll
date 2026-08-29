@@ -1,6 +1,6 @@
-# 一次性（只读）：为「consume 10 条」挑帖子——扫描 stat=2/3 帖的 links_json，
-# 数每帖挂的该站 pending 链接数，给出恰好凑 10 条的帖子组合（优先 stat=2
-# 可直接选的、created_at 最旧的；stat=3 的需先翻回 2）。
+# 一次性（只读）：为放量挑帖子——扫描 stat=3 帖的 links_json，数每帖挂的
+# 该站 pending 链接数，给出恰好凑 TARGET 条的帖子组合（created_at 升序、
+# 优先 1 命中帖；stat=2 未消费过的旧帖有未登记链接会连带消费，不选）。
 import json
 import os
 import sys
@@ -12,6 +12,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from scrape_all.sites.eroscripts.store import TopicStore
 from scrape_all.storage.models import EroLink, EroTopicItem
 
+TARGET = int(sys.argv[1]) if len(sys.argv) > 1 else 10
 DB = os.path.join(ROOT, "data", "eroscripts.db")
 
 with TopicStore(DB) as store:
@@ -20,7 +21,7 @@ with TopicStore(DB) as store:
   print(f"该站 pending 总数: {len(pend)}")
 
   rows = store.db.QueryRecords(EroTopicItem,
-                               where="stat in (2,3) AND links_json IS NOT NULL")
+                               where="stat=3 AND links_json IS NOT NULL")
   per_topic = []   # (topic_id, stat, created_at, 命中数)
   for t in rows:
     try:
@@ -31,21 +32,16 @@ with TopicStore(DB) as store:
     if hits:
       per_topic.append((t.topic_id, t.stat, t.created_at, hits))
 
-  per_topic.sort(key=lambda x: (x[1] != 2, x[2] or "", x[0]))
-  print("\n每帖命中（stat=2 在前，created_at 升序）：")
-  for r in per_topic:
-    print(f"  topic={r[0]} stat={r[1]} created={r[2] or '(空)'} 命中={r[3]}")
-
+  per_topic.sort(key=lambda x: (x[3] != 1, x[2] or "", x[0]))
   picked, total = [], 0
   for r in per_topic:
-    if total + r[3] <= 10:
+    if total + r[3] <= TARGET:
       picked.append(r)
       total += r[3]
-    if total == 10:
+    if total == TARGET:
       break
-  print(f"\n建议组合（恰好 {total} 条）：")
+  print(f"\n建议组合（恰好 {total} 条，{len(picked)} 帖）：")
   for r in picked:
-    print(f"  topic={r[0]} stat={r[1]} 命中={r[3]}")
-  need_flip = [r[0] for r in picked if r[1] != 2]
-  if need_flip:
-    print(f"需翻回 stat=2 的帖子: {need_flip}")
+    print(f"  topic={r[0]} created={r[2] or '(空)'} 命中={r[3]}")
+  print(f"\nids={','.join(str(r[0]) for r in picked)}")
+  print(f"--since 下限: {picked[0][2] if picked else '?'}")

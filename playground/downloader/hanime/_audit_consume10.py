@@ -10,8 +10,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from scrape_all.sites.eroscripts.store import TopicStore, DL_FINAL
 from scrape_all.storage.models import EroLink, EroTopicItem
 
-IDS = [301123, 307119, 307472, 307473, 307864, 307865, 307868,
-       307870, 308104, 308133]
+IDS = [307860, 307861, 308204, 308211, 308264, 308303, 308406, 308831,
+       308887, 311626, 311783, 312344, 313351, 313439, 313545, 314235,
+       315046, 315416, 316059, 316555, 316572, 316573, 316574, 316575,
+       316576, 316577, 316732, 316971, 317223, 317414]
 
 with TopicStore(os.path.join(ROOT, "data", "eroscripts.db")) as store:
   for tid in IDS:

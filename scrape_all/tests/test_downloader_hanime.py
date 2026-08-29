@@ -2,7 +2,7 @@
 from scrape_all.downloader.adapters import adapter_for, all_hosts
 from scrape_all.downloader.adapters.hanime import (
     HanimeAdapter, local_filename, parse_hanime_url, pick_best_row,
-    row_resolution,
+    resolve_dest, row_resolution,
 )
 
 
@@ -91,6 +91,24 @@ class TestLocalFilename:
   def test_no_ext_anywhere(self):
     row = {"url": "https://cdn.example/a", "name": "T", "quality": "(720p)", "ext": ""}
     assert local_filename(row, "1") == "T"
+
+
+class TestResolveDest:
+  def test_fresh_name(self, tmp_path):
+    dest, exists = resolve_dest(str(tmp_path), "ケイ.mp4", "404683")
+    assert (dest, exists) == (str(tmp_path / "ケイ.mp4"), False)
+
+  def test_same_name_collision_gets_vid_suffix(self, tmp_path):
+    # 同系列不同视频同名：第一把已落盘，第二把改 {stem}.{vid}{ext}
+    (tmp_path / "ケイ.mp4").write_bytes(b"x")
+    dest, exists = resolve_dest(str(tmp_path), "ケイ.mp4", "404683")
+    assert (dest, exists) == (str(tmp_path / "ケイ.404683.mp4"), False)
+
+  def test_both_names_exist_is_real_dup(self, tmp_path):
+    (tmp_path / "ケイ.mp4").write_bytes(b"x")
+    (tmp_path / "ケイ.404683.mp4").write_bytes(b"x")
+    dest, exists = resolve_dest(str(tmp_path), "ケイ.mp4", "404683")
+    assert (dest, exists) == (str(tmp_path / "ケイ.mp4"), True)
 
 
 class TestRegistry:
