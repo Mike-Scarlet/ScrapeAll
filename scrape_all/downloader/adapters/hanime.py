@@ -19,13 +19,16 @@ from scrape_all.downloader.fsutil import sanitize_filename
 #         每档画质一行，行尾 <a data-url="CDN 直链（带短期 token）" download="真名">下載</a>
 #   选档   画质文本里解析分辨率数字（(1080p)/(720p)/(480p)），取最大；解析不出保页面原序
 #         （页面按高清->标清排列，首行兜底即最高）
-#   下载   锚点没有 href（点击被站内 JS 接管），CDN 直链是内联 video/mp4 无
+#   下载   锚点没有 href（点击被站内 JS 接管），CDN 直链多数是内联 video/mp4 无
 #         attachment 头，跨域 download 属性又被 Chromium 忽略——原生导航只会
 #         内联播放，永不出下载事件。等价复刻站内 JS 的真实下载：把本页先导航
 #         到直链（落在 CDN origin 绕开 CORS，顺带从响应头拿 content-length），
 #         页内同源 fetch 整文件 -> blob -> objectURL 锚点点出下载事件 -> save_as。
 #         体积列是 N/A，等待按 content-length 放大（engine.blob_download 同款思路，
-#         但那个原语内部抢信号量，slot() 里调会死锁，故页内自实现）
+#         但那个原语内部抢信号量，slot() 里调会死锁，故页内自实现）。
+#         个别直链（无编号 vdownload 主机）带 Content-Disposition: attachment：
+#         goto 当场触发下载被浏览器取消（"Download is starting"），页面没离开
+#         站内 origin、页内 fetch 跨域必挂——这条岔路收下载事件直接 save_as
 #   幂等   真名（download 属性 + 扩展名）先算好，已存在就不发起导航（0 流量）；
 #         同系列不同视频可能同名（站点就给一样的 download 属性），同夹撞名时
 #         以 {stem}.{vid}{ext} 区分出第二把，连后缀名都存在才算真重复
@@ -131,6 +134,12 @@ def resolve_dest(dest_dir: str, name: str, vid: str) -> tuple[str, bool]:
   return dest, True
 
 
+def is_download_nav_error(exc: Exception) -> bool:
+  """goto 撞 attachment 直链时，playwright/patchright 都会取消导航并抛
+  'Download is starting'（下载已在路上，收事件即可）。按消息特征认，引擎无关。"""
+  return "Download is starting" in str(exc)
+
+
 class HanimeAdapter(HostAdapter):
   hosts = frozenset({"hanime1.me"})
 
@@ -215,14 +224,36 @@ class HanimeAdapter(HostAdapter):
         # 先把本页导航到直链：落在 CDN origin（后续 fetch 同源不受 CORS 限），
         # 顺带从响应头拿 content-length 供等待放大。导航失败不挡——照样试 fetch
         size = None
+        downloads: list = []
+        # 注意不能把 list.append 这种内建方法直接给 on()——事件包装器要摸
+        # 回调对象属性，内建方法没有，当场 AttributeError
+        page.on("download", lambda d: downloads.append(d))
         try:
           resp = await page.goto(data_url, timeout=30000)
           clen = (resp.headers.get("content-length")
                   if resp is not None else None)
           if clen and clen.isdigit():
             size = int(clen)
-        except Exception:
-          pass
+        except Exception as e:
+          if is_download_nav_error(e):
+            # attachment 直链：goto 被取消但浏览器已在下载。事件派发与 goto
+            # 抛错有竞态，短轮询等监听器接住再收件
+            dl = None
+            for _ in range(20):
+              if downloads:
+                dl = downloads[-1]
+                break
+              await page.wait_for_timeout(100)
+            if dl is not None:
+              try:
+                await dl.save_as(dest)
+                return DownloadResult(
+                    "downloaded", path=dest, size=os.path.getsize(dest),
+                    note=f"{best.get('quality') or ''} attachment 直链".strip())
+              except Exception as se:
+                return DownloadResult(
+                    "failed", note=f"attachment 直链收件失败 {se}")
+          # 其他导航失败不挡——照样试 fetch
         # 页内 fetch 整文件 -> blob -> objectURL 锚点 -> 下载事件（事件在 blob
         # 拉完后才点出，等待按体积放大）；patchright 的 TimeoutError 与
         # playwright 的不同类，按消息特征兜底接成 failed

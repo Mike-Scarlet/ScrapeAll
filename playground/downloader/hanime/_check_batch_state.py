@@ -1,13 +1,10 @@
-# 一次性：consume-10 验证选中的 10 帖 stat 3->2（续吃语义：让 pending 链接
-# 重新可见，跑完后 pass 会自动推回 3）
+# 一次性（只读）：批跑期间看该站非终态残留 + 42 帖 stat
 import os
 import sqlite3
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, ROOT)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
 DB = os.path.join(ROOT, "data", "eroscripts.db")
 IDS = [317534, 317910, 317917, 318538, 318615, 319393, 319919, 319924,
        320322, 320750, 321139, 321303, 321523, 321832, 322474, 322866,
@@ -18,19 +15,17 @@ IDS = [317534, 317910, 317917, 318538, 318615, 319393, 319919, 319924,
 
 con = sqlite3.connect(DB)
 try:
+  rows = con.execute(
+      "select url, dl_status, dl_note from EroLink "
+      "where host='hanime1.me' and dl_status not in "
+      "('downloaded','skipped','dead','manual','exhausted')").fetchall()
+  print(f"非终态残留: {len(rows)}")
+  for r in rows:
+    print(f"  {r[0]} {r[1]} {r[2]}")
   marks = ",".join("?" for _ in IDS)
-  before = con.execute(
-      f"SELECT topic_id, stat FROM EroTopicItem WHERE topic_id IN ({marks})",
-      IDS).fetchall()
-  print(f"翻前: {before}")
-  cur = con.execute(
-      f"UPDATE EroTopicItem SET stat=2 WHERE topic_id IN ({marks}) AND stat=3",
-      IDS)
-  con.commit()
-  print(f"UPDATE 影响行数: {cur.rowcount}")
-  after = con.execute(
-      f"SELECT topic_id, stat FROM EroTopicItem WHERE topic_id IN ({marks})",
-      IDS).fetchall()
-  print(f"翻后: {after}")
+  stats = con.execute(
+      f"select stat, count(*) from EroTopicItem where topic_id in ({marks}) "
+      "group by stat", IDS).fetchall()
+  print(f"42 帖 stat 分布: {stats}")
 finally:
   con.close()

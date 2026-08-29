@@ -1,8 +1,8 @@
 
 from scrape_all.downloader.adapters import adapter_for, all_hosts
 from scrape_all.downloader.adapters.hanime import (
-    HanimeAdapter, local_filename, parse_hanime_url, pick_best_row,
-    resolve_dest, row_resolution,
+    HanimeAdapter, is_download_nav_error, local_filename, parse_hanime_url,
+    pick_best_row, resolve_dest, row_resolution,
 )
 
 
@@ -109,6 +109,21 @@ class TestResolveDest:
     (tmp_path / "ケイ.404683.mp4").write_bytes(b"x")
     dest, exists = resolve_dest(str(tmp_path), "ケイ.mp4", "404683")
     assert (dest, exists) == (str(tmp_path / "ケイ.mp4"), True)
+
+
+class TestIsDownloadNavError:
+  def test_attachment_nav_message(self):
+    # playwright/patchright 取消导航时的真实消息形态
+    assert is_download_nav_error(RuntimeError("Download is starting"))
+
+  def test_other_errors_not_matched(self):
+    assert not is_download_nav_error(RuntimeError("net::ERR_CONNECTION_RESET"))
+    assert not is_download_nav_error(RuntimeError("Timeout 30000ms exceeded"))
+    assert not is_download_nav_error(RuntimeError(""))
+
+  def test_message_embedded_in_log(self):
+    e = RuntimeError("Page.goto: Download is starting\nCall log:\n  navigating")
+    assert is_download_nav_error(e)
 
 
 class TestRegistry:
