@@ -15,7 +15,7 @@ class TestProbeRenderWait:
     assert _WAIT_MS == 40000
 
 
-# 网格视图行实测结构（2026-08 playground/_mega_probe_diag.py 实抓）：
+# 网格视图行实测结构（2026-08 playground/downloader/mega/_mega_probe_diag.py 实抓）：
 # 根目录全是子文件夹的公开夹走 table.grid-table -> tr.megaListItem，
 # 旧判据 a.mega-node.fm-item 一个都没有，probe 误报 unknown
 _GRID_TDS = [

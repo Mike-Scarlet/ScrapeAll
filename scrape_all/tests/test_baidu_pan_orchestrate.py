@@ -1,6 +1,6 @@
 """orchestrate 纯逻辑单测：不碰浏览器，用假树验证策略/收集/对比/精确补齐。
 
-断言迁自 playground/_logic_selftest.py（升包时随逻辑一起搬），保持行为不漂移。
+断言迁自 playground/baidu_pan/orchestrate/_logic_selftest.py（升包时随逻辑一起搬），保持行为不漂移。
 """
 import asyncio
 

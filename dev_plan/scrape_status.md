@@ -83,7 +83,7 @@
 - **入口** `scripts/consume_posts.py`：默认 dry-run（walk+选点+打印计划，不动 stat）；`--execute` 真跑（首个非空计划前输 yes，`--yes` 跳过）；`--smoke/--ids/--limit` 选帖。流水式逐链接执行，报告落 `data/consume_report.txt`
 - **stat 流转**（仅 --execute）：share invalid → 6；计划空（全已覆盖）或全 op 成功 → 3；打开/walk 失败（非死链）或部分 op 失败 → 保持 2 下轮重试
 - **SHARE_DEAD(6) 语义**：终态；作者更新帖 → collect 时间戳变化 → 重置回 0 重走全程，死链补偿（原 TODO 3）就此闭环，无需额外机制
-- **存量补标**（`playground/_mark_consumed_backlog.py`，证据链从 bd_full_real_run/bd_smoke 日志解析）：8-18 真跑成功的 33 帖 + 冒烟 219782 → 3，死链 225111（山含）→ 6；补标前备份 `data/db_backup/`
+- **存量补标**（`playground/baidu_pan/checks/_mark_consumed_backlog.py`，证据链从 bd_full_real_run/bd_smoke 日志解析）：8-18 真跑成功的 33 帖 + 冒烟 219782 → 3，死链 225111（山含）→ 6；补标前备份 `data/db_backup/`
 - 已知取舍：部分失败帖重跑会把已成功 op 再转一遍（现接受重复，与升级前 --ids 手动补跑一致）
 
 **consume 的人工后半程（下载→入库闭环，2026-08-24 首轮跑通）**：转存到网盘 `/扒/<日期>/` 后由人下载解压到 NAS `[3]extracted/[yejiang]/`，再两步并库：
@@ -103,7 +103,7 @@
 - 落盘：`data/eroscripts/topics/` 1154 个 topic JSON（**工况外的也落盘**备复核）
 - 链接统计（实库现算）：**script 2728 / media 1246 / source 856 / other 2506 条**；topic 覆盖 script 1142 / media 875 / source 550 / other 982
 - **挂起待收编**：`111424`（Ikumonogakari）、`312646`（Mokusheep）；全量回填日志时是 4 个，170447/168095 其后已收编
-- 库检查脚本：`playground/_check_eros_{db,cat,links,cdn,deferred}.py`
+- 库检查脚本：`playground/eroscripts/checks/_check_eros_{db,cat,links,cdn,deferred}.py`
 
 ### 2.2 各阶段（统一入口 `scripts/scrape_eroscripts.py`）
 
@@ -150,7 +150,7 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 
 **eroscripts 侧已完成编排器**（2026-08-26，`scripts/consume_links.py` + `scrape_all/sites/eroscripts/consume.py`）：帖子按 created_at **升序**流水（最旧先吃，guard `--since` 默认 2026-04-01，存量吃完往后退），**probe→download 同 phase**（判活立刻下载，无大小闸门——正式逻辑不设限，size 只记录不拦截）。单 pass：懒登记（unregistered 才 upsert，零流量幂等）→ url 去重进队 → **K worker 并发池**（默认 3，engine 全局闸同步放行，`slot()` 早年就留了口）→ 统一扫尾收口（选中帖链接全终态推 3）。unknown/failed 留重试窗口下一 pass 再试；连续 5 条异常跨 worker 撤队（totals.aborted，重跑续吃）；落盘 `J:\es_scrape\<first_topic_id>\` 真名。CLI：dry-run 默认（只懒登记+打印）／`--execute`（开工输 yes）／`--smoke`(最旧3)／`--limit`／`--ids`／`--concurrency`／`finalize`（人工处理后零流量扫尾收口）。放量实录：3+10+10+30 帖共 52 帖收口、143 下载（含 1561MB 用户包 zip）、11 死链、0 异常；J 盘 4.7GB。guard 内余 231 帖 826 链接（funscript 632/pixeldrain 161/mega 25）。编排器单测 20 例（fake adapter/engine 注入，含真并发重叠/跨帖去重/撤队留尾），全量 230 passed。
 
-原出处（已随 cangku 升包解决）：`playground/bd_orchestrate.py:18-28` 的 TODO 块。
+原出处（已随 cangku 升包解决）：`playground/baidu_pan/orchestrate/bd_orchestrate.py:18-28` 的 TODO 块。
 
 ---
 
@@ -163,6 +163,6 @@ python data/_check_links.py              # cangku 打印 stat=2 links
 python scripts/consume_posts.py          # cangku consume dry-run（不动 stat）
 python scripts/local_library.py merge    # 下载解压产物 [3]->[4] 并库（默认 dry-run）
 python scripts/local_library.py scan     # 刷新 local_library.db（merge/人工处理后跑）
-python playground/_check_eros_db.py      # eroscripts 总量/stat/flags
-python playground/_check_eros_deferred.py # eroscripts 挂起帖及其链接
+python playground/eroscripts/checks/_check_eros_db.py      # eroscripts 总量/stat/flags
+python playground/eroscripts/checks/_check_eros_deferred.py # eroscripts 挂起帖及其链接
 ```
