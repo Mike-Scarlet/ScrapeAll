@@ -113,8 +113,10 @@ async def main(args):
       def emit(line=""):
         print(line)
         report.write(line + "\n")
+      # 恒 stealth（patchright 同 profile 同代理，API 兼容）：该流水含吃 CF
+      # 挑战的流媒体源站，普通文件托管在 patchright 下行为一致
       async with DownloadEngine(DOWNLOADER_PROXY_SERVER,
-                                args.concurrency) as engine:
+                                args.concurrency, stealth=True) as engine:
         if need_login:
           from scrape_all.sites.eroscripts.login import ErosLogin
           await ErosLogin.GuaranteeErosLogin(engine.context)

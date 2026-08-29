@@ -10,7 +10,7 @@ from scrape_all.storage.models import EroLink, EroTopicItem
 
 ADAPTER_HOSTS = frozenset({
     "pixeldrain.com", "gofile.io", "mega.nz", "catbox.moe",
-    "discuss.eroscripts.com",
+    "discuss.eroscripts.com", "hanime1.me",
 })
 
 
@@ -74,16 +74,19 @@ def test_upsert_links_initial_dl_status_by_kind_and_host(tmp_path):
         link("https://discuss.eroscripts.com/uploads/a.funscript", "script"),
         link("https://pixeldrain.com/l/abc", "media"),
         link("https://workupload.com/file/xyz", "media"),      # 无 adapter
-        link("https://iwara.tv/videos/1", "source"),
+        link("https://iwara.tv/videos/1", "source"),           # source 无 adapter
+        link("https://hanime1.me/watch?v=1", "source"),        # source 有 adapter
         link("https://www.patreon.com/posts/1", "other"),      # www. 剥除
     ], ADAPTER_HOSTS)
-    assert n == 5
+    assert n == 6
     assert get_link(store, "https://discuss.eroscripts.com/uploads/a.funscript").dl_status == DL_PENDING
     assert get_link(store, "https://pixeldrain.com/l/abc").dl_status == DL_PENDING
     wu = get_link(store, "https://workupload.com/file/xyz")
     assert (wu.dl_status, wu.dl_note) == (DL_MANUAL, "无 adapter，人工处理")
     src = get_link(store, "https://iwara.tv/videos/1")
     assert src.dl_status == DL_SKIPPED and "source" in src.dl_note
+    src_ok = get_link(store, "https://hanime1.me/watch?v=1")
+    assert src_ok.dl_status == DL_PENDING and "source" in src_ok.dl_note
     other = get_link(store, "https://www.patreon.com/posts/1")
     assert other.dl_status == DL_SKIPPED and other.host == "patreon.com"
     # 首见 topic 溯源

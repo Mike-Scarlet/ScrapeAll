@@ -221,9 +221,10 @@ class TopicStore:
                    adapter_hosts: frozenset) -> int:
     """parse 后登记链接。url 主键幂等：已存在的行不动状态（重跑 parse 不清进度），
     新行按 kind / host 初始化处置：
-      source/other            -> skipped（非下载目标；other 将来跟内容站时人工渠道改回）
-      script/media 无 adapter -> manual（人工清单）
-      其余                    -> pending 走 probe/download 流水
+      source 无 adapter / other -> skipped（流媒体出处未跟；other 将来人工渠道改回）
+      source 有 adapter         -> pending（流媒体源站走页面流下载，如 hanime1）
+      script/media 无 adapter   -> manual（人工清单）
+      其余                      -> pending 走 probe/download 流水
     返回新建行数。"""
     existing = {row.url for row in self.db.QueryRecords(EroLink)}
     new_items = []
@@ -234,7 +235,9 @@ class TopicStore:
       host = self._host_of(url)
       kind = l.get("kind") or "other"
       dl_status, note = DL_PENDING, ""
-      if kind in ("source", "other"):
+      if kind == "source" and host in adapter_hosts:
+        note = "source 流媒体源站，adapter 已跟"
+      elif kind in ("source", "other"):
         dl_status = DL_SKIPPED
         note = "source 流媒体出处，非下载目标" if kind == "source" else "other 内容站，跟否待决策"
       elif host not in adapter_hosts:

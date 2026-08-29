@@ -35,15 +35,19 @@ class DownloadError(RuntimeError):
 
 
 class DownloadEngine:
-  def __init__(self, proxy_server: str = None, concurrency: int = 1):
+  def __init__(self, proxy_server: str = None, concurrency: int = 1,
+               stealth: bool = False):
+    """stealth=True 改用 patchright 会话（同 profile 同代理，API 兼容）：
+    间歇性吃 CF 挑战的站点（如流媒体源站）用，普通文件托管不需要。"""
     self._proxy = proxy_server
+    self._stealth = stealth
     self._sem = asyncio.Semaphore(concurrency)
     self._session: BrowserSession = None
     self._pages: dict[str, Page] = {}       # origin host -> parked page
     self._page_locks: dict[str, asyncio.Lock] = {}
 
   async def __aenter__(self) -> "DownloadEngine":
-    self._session = BrowserSession(self._proxy)
+    self._session = BrowserSession(self._proxy, stealth=self._stealth)
     await self._session.__aenter__()
     return self
 

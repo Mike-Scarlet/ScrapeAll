@@ -44,6 +44,7 @@ def pick_links(host: str, limit: int) -> list[str]:
       "pixeldrain": "pixeldrain.com",
       "gofile": "gofile.io/d/",
       "mega": "mega.nz/",
+      "hanime": "hanime1.me/watch",   # /download?v= 形态用 --url 指定
   }
   key = keys[host]
   seen, out = set(), []
@@ -63,10 +64,11 @@ def fmt_size(n):
   return f"{n / 1024 / 1024:.1f}MB" if n and n >= 1024 * 1024 else f"{n}B" if n else "?"
 
 
-async def verify(urls: list[str], do_download: bool):
+async def verify(urls: list[str], do_download: bool, stealth: bool = False):
   os.makedirs(_VERIFY_DIR, exist_ok=True)
   results = []
-  async with DownloadEngine(DOWNLOADER_PROXY_SERVER, DOWNLOADER_CONCURRENCY) as engine:
+  async with DownloadEngine(DOWNLOADER_PROXY_SERVER, DOWNLOADER_CONCURRENCY,
+                            stealth=stealth) as engine:
     if any("discuss.eroscripts.com" in u for u in urls):
       from scrape_all.sites.eroscripts.login import ErosLogin
       await ErosLogin.GuaranteeErosLogin(engine.context)
@@ -104,12 +106,14 @@ async def verify(urls: list[str], do_download: bool):
 async def main():
   sys.stdout.reconfigure(encoding="utf-8", errors="replace")
   ap = argparse.ArgumentParser(description="下载基建真链接验证")
-  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile", "mega"),
+  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile", "mega", "hanime"),
                   help="从库里挑该 host 的链接")
   ap.add_argument("--url", action="append", help="直接指定链接（可多次）")
   ap.add_argument("--limit", type=int, default=3)
   ap.add_argument("--download", action="store_true",
                   help=f"探活为 alive 且 <= {MAX_DOWNLOAD_SIZE // 1024 // 1024}MB 的试下载")
+  ap.add_argument("--stealth", action="store_true",
+                  help="patchright 会话（间歇吃 CF 挑战的流媒体源站用）")
   args = ap.parse_args()
 
   urls = args.url or []
@@ -117,7 +121,7 @@ async def main():
     urls += pick_links(args.host, args.limit)
   if not urls:
     ap.error("--host 或 --url 至少给一个")
-  await verify(urls, args.download)
+  await verify(urls, args.download, stealth=args.stealth)
   try:
     input("\npress enter to exit ")
   except EOFError:

@@ -5,17 +5,20 @@ from scrape_all.downloader.adapters.base import (
 from scrape_all.downloader.adapters.catbox import CatboxAdapter
 from scrape_all.downloader.adapters.eros_uploads import ErosUploadsAdapter
 from scrape_all.downloader.adapters.gofile import GofileAdapter
+from scrape_all.downloader.adapters.hanime import HanimeAdapter
 from scrape_all.downloader.adapters.mega import MegaAdapter
 from scrape_all.downloader.adapters.pixeldrain import PixeldrainAdapter
 
 # adapter 注册表：接入新家就在这里加一行。逐家接入（catbox 先跑通契约，
-# 站内 uploads 次之，pixeldrain / gofile / mega 已接，后续 gdrive / workupload）。
+# 站内 uploads 次之，pixeldrain / gofile / mega 已接，hanime 是首家流媒体源站，
+# 后续 gdrive / workupload）。
 _ADAPTERS = [
     CatboxAdapter(),
     ErosUploadsAdapter(),
     PixeldrainAdapter(),
     GofileAdapter(),
     MegaAdapter(),
+    HanimeAdapter(),
 ]
 
 
