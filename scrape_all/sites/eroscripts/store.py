@@ -10,7 +10,7 @@ from python_general_lib.database.sqlite3_wrap.multiple_models_sqlite_database im
     MultipleModelsSQLiteDatabase
 
 from scrape_all.sites.eroscripts.history import TopicRef, parse_iso, to_iso
-from scrape_all.storage.models import EroLink, EroTopicItem, ScrapeMeta
+from scrape_all.storage.models import EroExtract, EroLink, EroTopicItem, ScrapeMeta
 
 
 class Stat(IntEnum):
@@ -62,7 +62,8 @@ class TopicStore:
   stat 流转、回填标志。独立 db 文件，不与 cangku 混。"""
 
   def __init__(self, db_path: str):
-    self.db = MultipleModelsSQLiteDatabase(db_path, [EroTopicItem, EroLink, ScrapeMeta])
+    self.db = MultipleModelsSQLiteDatabase(
+        db_path, [EroTopicItem, EroLink, EroExtract, ScrapeMeta])
     self.db.Initiate()
 
   def __enter__(self) -> "TopicStore":
@@ -384,6 +385,24 @@ class TopicStore:
     for row in rows:
       counts[row["dl_status"]] = counts.get(row["dl_status"], 0) + 1
     return counts
+
+  # ---- 档案解压状态（extract 阶段，EroExtract） ----
+
+  def mark_extract(self, archive_path: str, status: str, topic_id: int = 0,
+                   depth: int = 1, parent_path: str = "", files=None,
+                   note: str = ""):
+    """解压结果落库（archive_path 主键 OR REPLACE）：done 全条目解出并核验，
+    failed 重跑续传（逐条目体积比对，已在且同体积不重写）。"""
+    item = EroExtract(archive_path=archive_path)
+    item.status = status
+    item.topic_id = topic_id
+    item.depth = depth
+    item.parent_path = parent_path
+    item.files_json = json.dumps(files or [], ensure_ascii=False)
+    item.note = note
+    item.extracted_at = _now_iso()
+    self.db.InsertRecord(item, on_conflict="OR REPLACE")
+    self.db.Commit()
 
   # ---- 元信息 ----
 

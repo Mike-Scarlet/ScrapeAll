@@ -1,6 +1,6 @@
 # 抓取链路现状 — cangku / eroscripts
 
-> 最后更新：2026-08-24（consume 升包 + 存量补标当日，数据为 `data/` 实库核对）
+> 最后更新：2026-08-30（eroscripts extract 阶段首轮全量跑通当日，数据为 `data/` 实库核对）
 
 ## 0. 总览
 
@@ -152,6 +152,14 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 
 原出处（已随 cangku 升包解决）：`playground/baidu_pan/orchestrate/bd_orchestrate.py:18-28` 的 TODO 块。
 
+### 4.1 extract 阶段（2026-08-30 首轮全量跑通）
+
+consume 落盘后的档案后处理：`scripts/extract_archives.py`（dry-run 默认 / `--execute` / `--ids`）+ `scrape_all/sites/eroscripts/extract.py` + `EroExtract` 表（archive_path 主键，files_json 供配对 provenance）。zip 走 stdlib；rar 走 `E:\Program Files\unrar\UnRAR.exe` 子进程，先解临时目录再按清洗路径搬入（unrar 只写原名）。解到包同名子目录 `J:\es_scrape\<topic>\<包stem>\`（包文件保留不删，dl_path 引用完整）；嵌套档案递归到不动点，深度上限 3。幂等：done 跳过、failed 重跑续传（逐条目体积比对）；条目级 sanitize、zip-slip 拒绝、撞名 token 第二把、超长失败、__MACOSX 等杂物跳过。首轮实录：105 档案 → **104 done / 556 文件 / +28.3GB**（含运行中另一 agent 在途新包的增量接入）；两个加密 rar（unrar 无 tty 退 255，note 有提示）密码在帖文 Pass/pw 提示里，人工补解落库（note 带密码）；唯一 failed 是 320427 mega zip **下载流串包**（本地头是别帖 mizumizuni 内容、中央目录才是自己，待重下决策）。单测 17 例（test_eros_extract.py），全量 319 passed。
+
+### 4.2 下一步：配对决策表
+
+funscript↔视频分层匹配（exact stem → 轴变体 → NFKC 模糊 → ffprobe 时长 ±2s → 单视频兜底），walk topic 目录树（extract 已把包内内容铺出来，同目录 exact 白拿 88/91 混合包的部分自配对）；rename 方向与人工复核界面待定。
+
 ---
 
 ## 附：常用巡检
@@ -165,4 +173,5 @@ python scripts/local_library.py merge    # 下载解压产物 [3]->[4] 并库（
 python scripts/local_library.py scan     # 刷新 local_library.db（merge/人工处理后跑）
 python playground/eroscripts/checks/_check_eros_db.py      # eroscripts 总量/stat/flags
 python playground/eroscripts/checks/_check_eros_deferred.py # eroscripts 挂起帖及其链接
+python scripts/extract_archives.py                       # 档案解压 dry-run（幂等增量）
 ```

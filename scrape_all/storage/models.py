@@ -94,6 +94,28 @@ class EroLink:
 
 
 @PySQLModel(initialize_fields=True)
+class EroExtract:
+  """eroscripts 下载后处理：档案（zip/rar）解压状态。archive_path 主键
+  （相对落盘根，'/' 分隔）。解压目标固定为档案旁的同名子目录 <stem>/，
+  包文件本身保留不删（dl_path 引用完整性）。
+
+  status: done 全条目解出并核验（重跑跳过）/ failed 中断或核验缺件（重跑续传）
+  depth: 顶层下载包=1；包内嵌套档案=父 depth+1（extract.EXTRACT_DEPTH_MAX 截止）
+  parent_path: 嵌套档案的父 archive_path，顶层为空
+  files_json: [{"path": 相对根路径, "size": B, "src": 包内原名, "action": wrote|have}]
+  —— 配对决策表的 provenance 从这反查（哪个包出的哪个文件）。
+  """
+  archive_path: str = Field(primary_key=True)
+  topic_id: int = Field(not_null=True, default=0)
+  status: str = Field(not_null=True, default="pending")
+  depth: int = Field(not_null=True, default=1)
+  parent_path: str = Field(not_null=True, default="")
+  files_json: str = Field(not_null=True, default="")
+  note: str = Field(not_null=True, default="")
+  extracted_at: str = Field(not_null=True, default="")
+
+
+@PySQLModel(initialize_fields=True)
 class LibraryFolder:
   """local_library：NAS 已确认库（erodouga/creators/[4]confirmed）的作者文件夹镜像
 
