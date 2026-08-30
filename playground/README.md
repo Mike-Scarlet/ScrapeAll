@@ -1,8 +1,8 @@
 # playground —— 探查与原型工作区
 
 生命周期：**探查 → 原型 → 上岸（scrape_all/ + scripts/ + tests/）→ 随迁脚本随放量结案删除**。
-2026-08-30 大清理后只留四类还活着的东西；删掉的约 124 个脚本的知识去向见
-`archive/playground_history/README.md`（git 历史永远可捞）。
+2026-08-30 大清理后只留少量活着的东西（后续新增随验随记）；删掉的约 124 个脚本的
+知识去向见 `archive/playground_history/README.md`（git 历史永远可捞）。
 
 ## 现存清单
 
