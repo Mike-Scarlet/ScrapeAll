@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import Page
 
 from scrape_all.browser.session import BrowserSession
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import resolve_save_path, sanitize_filename, url_token
 
 # 下载引擎：所有取回动作都发生在浏览器页面里——真实 Chrome TLS 指纹、
 # browser_session/ 持久 profile 的登录态、走 DOWNLOADER_PROXY 的代理出口，
@@ -19,6 +19,9 @@ from scrape_all.downloader.fsutil import sanitize_filename
 #                   -> save_as 落盘。中小文件用（几百 MB 级会占渲染进程内存，别用）
 #   direct_download 带下载事件期望的 goto —— 依赖服务端 Content-Disposition: attachment，
 #                   浏览器下载器自己流式落盘，大文件用这个
+#   save_download   所有 save_as 的统一收口：撞名落 {stem}.{url_token}{ext} 第二把，
+#                   全局锁保证决策+落盘原子——绝不覆盖已有文件（防并发竞态与
+#                   镜像真名撞车静默丢内容，329965/324422 实案）
 #
 # park 机制：先 goto(url, wait_until="commit") 拿到目标 origin 的页面、立刻
 # window.stop() 掐掉正文流（不然 inline 渲染的视频会白吞一份流量），之后页内
@@ -45,6 +48,10 @@ class DownloadEngine:
     self._session: BrowserSession = None
     self._pages: dict[str, Page] = {}       # origin host -> parked page
     self._page_locks: dict[str, asyncio.Lock] = {}
+    # 落盘收口全局锁：撞名决策（exists 判断）与 save_as 之间有 await 窗口，
+    # 并发 worker 会互踩（329965 实案：两个 worker 都在对方落盘前过了检查，
+    # 后写的把先写的覆盖掉）。决策+落盘必须原子。
+    self._save_lock = asyncio.Lock()
 
   async def __aenter__(self) -> "DownloadEngine":
     self._session = BrowserSession(self._proxy, stealth=self._stealth)
@@ -69,6 +76,19 @@ class DownloadEngine:
     """adapter 的整页浏览+点击流程（不走 park 页原语）：一样要过并发闸"""
     async with self._sem:
       yield
+
+  async def save_download(self, download, dest_dir: str, name: str,
+                          token: str) -> str:
+    """统一落盘收口：所有 save_as 必经此处。目标名已被占（并发竞态 / 镜像
+    真名撞车 / 检查名与 suggested 名不同源）时落 {stem}.{token}{ext} 第二把，
+    绝不覆盖已有文件。name 会再过一遍 sanitize（suggested 名是裸的）。
+    token 用 url_token(url)（多文件夹用 url#文件名 区分），同 token 重跑
+    覆盖的是自己的旧副本，无害。"""
+    os.makedirs(dest_dir, exist_ok=True)
+    async with self._save_lock:
+      dest = resolve_save_path(dest_dir, sanitize_filename(name), token)
+      await download.save_as(dest)
+      return dest
 
   async def _page_for(self, url: str,
                       park_url: str = None) -> tuple[Page, asyncio.Lock]:
@@ -171,10 +191,9 @@ class DownloadEngine:
             # 在 with 里抛，expect_download 的等待才会立刻取消而不是干等到超时
             raise DownloadError(f"页内 fetch 失败 {err}: {url}")
         download = await dl_info.value
-        dest = os.path.join(
-            dest_dir, sanitize_filename(download.suggested_filename or fallback_name))
-        await download.save_as(dest)
-        return dest
+        return await self.save_download(
+            download, dest_dir,
+            download.suggested_filename or fallback_name, url_token(url))
 
   async def direct_download(self, url: str, dest_dir: str,
                             filename: str = None,
@@ -205,9 +224,7 @@ class DownloadEngine:
               raise
         download = await dl_info.value
         # adapter 显式给的名字（probe 解析出的真名）优先，重跑幂等靠它对上
-        dest = os.path.join(
-            dest_dir,
-            sanitize_filename(filename or download.suggested_filename
-                              or fallback_name))
-        await download.save_as(dest)
-        return dest
+        return await self.save_download(
+            download, dest_dir,
+            filename or download.suggested_filename or fallback_name,
+            url_token(url))

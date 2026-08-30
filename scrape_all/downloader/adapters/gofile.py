@@ -9,7 +9,7 @@ from playwright.async_api import TimeoutError as PWTimeoutError
 from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import same_size_or_unknown, sanitize_filename, url_token
 
 # gofile：库内 55 条，全部 /d/{id} 形态。全页面流（开页面 -> 读渲染 -> 点按钮）。
 #
@@ -160,19 +160,24 @@ class GofileAdapter(HostAdapter):
         for r in rows:
           local = sanitize_filename(r["name"])
           dest = os.path.join(dest_dir, local)
-          if os.path.exists(dest):
+          # 幂等：体积感知（行体积是页面近似值，3% 容差）；对不上是不同内容
+          # 撞名，放行走引擎 token 第二把
+          if os.path.exists(dest) and same_size_or_unknown(
+              dest, r["size"], rel_tol=0.03):
             skipped += 1
-            continue          # 幂等：已存在就不点按钮（0 流量）
+            continue          # 已存在就不点按钮（0 流量）
           btn = page.locator(_DL_BTN).nth(r["dl_index"])
           try:
             async with page.expect_download(
                 timeout=dl_wait_ms(r["size"], 60)) as dl_info:
               await btn.click()
             dl = await dl_info.value
-            dest = os.path.join(
-                dest_dir,
-                sanitize_filename(dl.suggested_filename or local))
-            await dl.save_as(dest)
+            # 引擎收口落盘：检查名（aria-label）与 suggested 名可能不同源，
+            # 且同夹不同行可能同名——token 掺文件名保证行间也分得开
+            dest = await engine.save_download(
+                dl, dest_dir,
+                dl.suggested_filename or local,
+                url_token(f"{url}#{r['name']}"))
             done += 1
           except (PWTimeoutError, Exception) as e:
             failed += 1

@@ -7,7 +7,7 @@ from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult,
     filename_from_cd, size_from_range_headers, timeout_for_size,
 )
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import same_size_or_unknown, sanitize_filename
 
 # eroscripts 站内附件（discourse /uploads/，脚本主形态，2693 条）。
 # 附件响应带 Content-Disposition: attachment —— goto 会变成下载事件
@@ -56,8 +56,12 @@ class ErosUploadsAdapter(HostAdapter):
     name = sanitize_filename(probe.filename or self._url_name(url))
     dest = os.path.join(dest_dir, name)
     if os.path.exists(dest):
-      return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
-                            note="已存在")
+      # 314297/329965 实案教训：同帖两条不同附件解出同一真名。体积对得上
+      # 才是镜像跳过；对不上（或并发窗口里另一 worker 刚落盘）放行，引擎
+      # 落 {stem}.{token}{ext} 第二把，不覆盖也不误跳
+      if same_size_or_unknown(dest, probe.size):
+        return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
+                              note="已存在")
     try:
       path = await engine.direct_download(url, dest_dir, filename=name,
                                           timeout_s=timeout_for_size(probe.size))

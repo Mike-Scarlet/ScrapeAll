@@ -8,7 +8,7 @@ from playwright.async_api import TimeoutError as PWTimeoutError
 from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import same_size_or_unknown, sanitize_filename, url_token
 
 # pixeldrain：eroscripts 媒体链接主力（EroLink 现存 190 条：/d 77、/l 72、/u 41）。
 #
@@ -174,14 +174,6 @@ class PixeldrainAdapter(HostAdapter):
           return DownloadResult("dead", note=f"http {status or '?'} {title[:40]}")
         name = name_from_title(title)
 
-        # 幂等：文件已在就别点按钮（0 流量）
-        local_name = sanitize_filename(
-            name if kind == "file" else f"{name}.zip")
-        if os.path.exists(os.path.join(dest_dir, local_name)):
-          return DownloadResult("skipped",
-                                path=os.path.join(dest_dir, local_name),
-                                note="已存在")
-
         if kind == "list":
           btn = page.locator(_LIST_DL_BTN).first
           est = est_size_from_stats(await _stat_sizes(page))
@@ -195,6 +187,18 @@ class PixeldrainAdapter(HostAdapter):
           btn = page.locator(_TOOLBAR_BTN).filter(
               has_text=re.compile(r"download", re.I)).first
           est = await labeled_file_size(page)
+
+        # 幂等：体积感知再点按钮（0 流量）。est 是页面人读文本解析的近似值
+        # （列表还是成员体积和），文件 3% / 列表 10% 容差；对不上的是不同
+        # 内容同名包（324422 实案：两个列表各自 299MB/2.09GB 同 zip 真名），
+        # 放行走引擎 token 第二把，不吃掉内容
+        local_name = sanitize_filename(
+            name if kind == "file" else f"{name}.zip")
+        existing = os.path.join(dest_dir, local_name)
+        if os.path.exists(existing) and same_size_or_unknown(
+            existing, est, rel_tol=0.1 if kind == "list" else 0.03):
+          return DownloadResult("skipped", path=existing, note="已存在")
+
         try:
           await btn.wait_for(state="visible", timeout=_CLICK_WAIT_MS)
         except PWTimeoutError:
@@ -205,10 +209,12 @@ class PixeldrainAdapter(HostAdapter):
         async with page.expect_download(timeout=dl_wait_ms(est, 60)) as dl_info:
           await btn.click()
         download = await dl_info.value
-        dest = os.path.join(
-            dest_dir,
-            sanitize_filename(download.suggested_filename or local_name))
-        await download.save_as(dest)
+        # 落盘走引擎收口：检查名（页标题）与 suggested 名可能不同源
+        # （324422 实案：两个不同列表页标题不同、服务端 zip 真名相同，直接
+        # save_as 把先下的 299MB 静默覆盖掉），撞名由引擎落 token 第二把
+        dest = await engine.save_download(
+            download, dest_dir,
+            download.suggested_filename or local_name, url_token(url))
         return DownloadResult("downloaded", path=dest, size=os.path.getsize(dest))
       finally:
         await page.close()

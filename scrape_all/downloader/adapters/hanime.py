@@ -246,7 +246,7 @@ class HanimeAdapter(HostAdapter):
               await page.wait_for_timeout(100)
             if dl is not None:
               try:
-                await dl.save_as(dest)
+                dest = await engine.save_download(dl, dest_dir, name, vid)
                 return DownloadResult(
                     "downloaded", path=dest, size=os.path.getsize(dest),
                     note=f"{best.get('quality') or ''} attachment 直链".strip())
@@ -271,7 +271,9 @@ class HanimeAdapter(HostAdapter):
                 "failed", note=f"无下载事件 size={size or '?'} "
                                f"{best.get('quality') or ''}".strip())
           raise
-        await download.save_as(dest)
+        # 落盘走引擎收口：前置 resolve_dest 与真正 save 之间隔着整个下载过程，
+        # 并发下另一 worker 可能同名先落——引擎在锁内重决策，撞名落 vid 第二把
+        dest = await engine.save_download(download, dest_dir, name, vid)
         return DownloadResult("downloaded", path=dest, size=os.path.getsize(dest),
                               note=f"{best.get('quality') or ''} {size or '?'}B".strip())
       finally:

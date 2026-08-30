@@ -6,7 +6,7 @@ from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult, size_from_range_headers,
     timeout_for_size,
 )
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import same_size_or_unknown, sanitize_filename
 
 # catbox：纯直链文件（files.catbox.moe/{hash}.{ext}，litter 是限时变体域名，
 # 实测 litter 子域网络层整体取不动，探活给 unknown 不误判死）。
@@ -42,8 +42,11 @@ class CatboxAdapter(HostAdapter):
     name = sanitize_filename(probe.filename or self._filename(url))
     dest = os.path.join(dest_dir, name)
     if os.path.exists(dest):
-      return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
-                            note="已存在")
+      # 体积对得上（或探不到体积）才算镜像幂等跳过；对不上是不同内容撞名，
+      # 放行让引擎落 {stem}.{token}{ext} 第二把，不吃掉新内容
+      if same_size_or_unknown(dest, probe.size):
+        return DownloadResult("skipped", path=dest, size=os.path.getsize(dest),
+                              note="已存在")
     try:
       # blob 路径超时罩着页内 fetch 全程（整文件拉完才出下载事件），按 probe
       # 拿到的体积放：185.6MB@200KB/s 兜底网速约 17 分钟

@@ -9,7 +9,7 @@ from playwright.async_api import TimeoutError as PWTimeoutError
 from scrape_all.downloader.adapters.base import (
     DownloadResult, HostAdapter, ProbeResult, dl_wait_ms,
 )
-from scrape_all.downloader.fsutil import sanitize_filename
+from scrape_all.downloader.fsutil import same_size_or_unknown, sanitize_filename, url_token
 
 # mega.nz：库内 208 条（131 folder + 68 file 形态，密钥都在 URL hash）。全页面流。
 #
@@ -248,17 +248,21 @@ class MegaAdapter(HostAdapter):
           return DownloadResult("failed", note=f"页面状态 {state}: {note}")
         os.makedirs(dest_dir, exist_ok=True)
         if kind == "file":
-          return await self._download_file(page, dest_dir)
+          return await self._download_file(engine, url, page, dest_dir)
         return await self._download_folder_zip(page, dest_dir)
       finally:
         await page.close()
 
-  async def _download_file(self, page, dest_dir: str) -> DownloadResult:
+  async def _download_file(self, engine, url: str, page,
+                           dest_dir: str) -> DownloadResult:
     fname, size = await self._read_file_header(page)
     local = sanitize_filename(fname)
     dest = os.path.join(dest_dir, local)
     if os.path.exists(dest):
-      return DownloadResult("skipped", path=dest, note=f"{local} 已存在")
+      # 体积感知幂等：页头体积是人读文本解析（"39.5MB"），给 3% 容差；
+      # 对不上才是不同内容撞名，放行走引擎 token 第二把
+      if same_size_or_unknown(dest, size, rel_tol=0.03):
+        return DownloadResult("skipped", path=dest, note=f"{local} 已存在")
     wait_ms = dl_wait_ms(size, _DL_WAIT_MS / 1000)
     watchdog = asyncio.create_task(_sheet_watchdog(page))
     try:
@@ -266,9 +270,9 @@ class MegaAdapter(HostAdapter):
         await page.locator(_FILE_DL_BTN).first.click()
         await _maybe_nag(page)
       dl = await dl_info.value
-      dest = os.path.join(
-          dest_dir, sanitize_filename(dl.suggested_filename or local))
-      await dl.save_as(dest)
+      # 引擎收口落盘：检查名（fileinfo）与 suggested 名可能不同源
+      dest = await engine.save_download(
+          dl, dest_dir, dl.suggested_filename or local, url_token(url))
       return DownloadResult(
           "downloaded", path=dest, size=os.path.getsize(dest),
           note=f"{os.path.basename(dest)}（页面内整文件拉取后落盘）")
@@ -294,7 +298,9 @@ class MegaAdapter(HostAdapter):
       suggested = dl.suggested_filename or "mega.zip"
       dest = os.path.join(dest_dir, sanitize_filename(suggested))
       # zip 名在事件出现才知道（= 文件夹真名.zip），幂等只能事后判：
-      # 已存在就 cancel 不写盘（流量已在页面内花掉，属人工复跑场景）
+      # 已存在就 cancel 不写盘（流量已在页面内花掉，属人工复跑场景）。
+      # 已知取舍：不同内容的两个夹同真名会被当镜像吃掉（miss 不丢盘）——
+      # zip_est_size 是估算值做不了体积比对，宁可 miss 不冒险写盘
       if os.path.exists(dest):
         await dl.cancel()
         return DownloadResult("skipped", path=dest,
