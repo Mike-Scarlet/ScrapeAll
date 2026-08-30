@@ -10,7 +10,7 @@ from scrape_all.sites.eroscripts.consts import ErosDef
 # tag 列表取数：在 playwright 页面里同源 fetch 站内 .json（走浏览器登录态/指纹，
 # 不解析主题化 DOM）。discourse 每 30 条一页。
 #
-# 分页取数规则（probe 实测，见 playground/eroscripts/probe/_probe_eroscripts_p5/p6.py）：
+# 分页取数规则（2026-08 probe 实测，脚本 _probe_eroscripts_p5/p6.py 已删见 git 历史）：
 #   第 1 页用无参 {tag_url}.json        —— 新鲜数据（含几分钟前的新帖）
 #   第 2 页起用 {tag_url}.json?page=N   —— 服务端缓存快照，滞后数天
 # 缓存位移会让相邻页少量重叠/漏排，靠 topic_id 去重吸收；全新帖最晚在下一次

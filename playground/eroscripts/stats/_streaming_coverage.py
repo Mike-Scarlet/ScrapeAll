@@ -1,5 +1,6 @@
-# 流媒体 source 覆盖度 + 链接级闭环盘点（只读）。_script_only_stats.py 是接入前的
-# 一次性分桶存档，保持原样；本脚本接棒接入后的两个新问题：
+# 流媒体 source 覆盖度 + 链接级闭环盘点（只读）。前身 _script_only_stats.py 是接入前的
+# 一次性分桶（已随 playground 清理删除，报告存 archive/playground_history/_script_only_topics.md）；
+# 本脚本接棒接入后的两个新问题：
 #   1) source 站哪些已有 adapter（帖可收）、哪些没接（后续接入候选清单）
 #   2) 已接入站的 EroLink 闭环：dl_status 分布、非终态数、落盘字节
 # 输出分两层：stdout 只有聚合数 + adapter 类名（无域名，可直接跑不触名单）；

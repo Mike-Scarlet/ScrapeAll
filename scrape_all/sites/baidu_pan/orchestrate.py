@@ -1,6 +1,7 @@
 """百度盘转存编排（cangku consume 阶段）：分享树 -> 增量转存计划。
 
-从 playground/baidu_pan/orchestrate/bd_orchestrate_dryrun.py 升包。选点核心思路：
+从 playground/baidu_pan/orchestrate/bd_orchestrate_dryrun.py 升包
+（原型已随 2026-08-30 playground 清理删除，见 git 历史）。选点核心思路：
   分享根目录按作者分道 —— 本地库（local_library.db，NAS 已确认库镜像）无记录的
   作者整目录全转存；已匹配作者 walk 到月份层做增量对比，转存目标 =
   最后已抓取月（防当月没抓完，精确补齐只挑本地没有的子项）+ 其他未覆盖月。
