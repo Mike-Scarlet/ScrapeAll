@@ -10,7 +10,8 @@ from python_general_lib.database.sqlite3_wrap.multiple_models_sqlite_database im
     MultipleModelsSQLiteDatabase
 
 from scrape_all.sites.eroscripts.history import TopicRef, parse_iso, to_iso
-from scrape_all.storage.models import EroExtract, EroLink, EroTopicItem, ScrapeMeta
+from scrape_all.storage.models import (EroExtract, EroLink, EroNorm,
+                                       EroTopicItem, ScrapeMeta)
 
 
 class Stat(IntEnum):
@@ -63,7 +64,7 @@ class TopicStore:
 
   def __init__(self, db_path: str):
     self.db = MultipleModelsSQLiteDatabase(
-        db_path, [EroTopicItem, EroLink, EroExtract, ScrapeMeta])
+        db_path, [EroTopicItem, EroLink, EroExtract, EroNorm, ScrapeMeta])
     self.db.Initiate()
 
   def __enter__(self) -> "TopicStore":
@@ -401,6 +402,24 @@ class TopicStore:
     item.files_json = json.dumps(files or [], ensure_ascii=False)
     item.note = note
     item.extracted_at = _now_iso()
+    self.db.InsertRecord(item, on_conflict="OR REPLACE")
+    self.db.Commit()
+
+  # ---- 归一化库落位状态（normalize 阶段，EroNorm） ----
+
+  def mark_norm(self, target_path: str, topic_id: int, source_path: str = "",
+                kind: str = "video", action: str = "copy",
+                status: str = "done", note: str = ""):
+    """es_norm 落位结果落库（target_path 主键 OR REPLACE）：done 盘上核验过
+    重跑跳过；failed 重跑重试。"""
+    item = EroNorm(target_path=target_path)
+    item.topic_id = topic_id
+    item.source_path = source_path
+    item.kind = kind
+    item.action = action
+    item.status = status
+    item.note = note
+    item.done_at = _now_iso()
     self.db.InsertRecord(item, on_conflict="OR REPLACE")
     self.db.Commit()
 

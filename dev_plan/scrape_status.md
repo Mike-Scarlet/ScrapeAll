@@ -155,11 +155,18 @@ eroscripts consume 的第一步：**逐家文件托管做单链接可信的 prob
 
 ### 4.1 extract 阶段（2026-08-30 首轮全量跑通）
 
-consume 落盘后的档案后处理：`scripts/extract_archives.py`（dry-run 默认 / `--execute` / `--ids`）+ `scrape_all/sites/eroscripts/extract.py` + `EroExtract` 表（archive_path 主键，files_json 供配对 provenance）。zip 走 stdlib；rar 走 `E:\Program Files\unrar\UnRAR.exe` 子进程，先解临时目录再按清洗路径搬入（unrar 只写原名）。解到包同名子目录 `J:\es_scrape\<topic>\<包stem>\`（包文件保留不删，dl_path 引用完整）；嵌套档案递归到不动点，深度上限 3。幂等：done 跳过、failed 重跑续传（逐条目体积比对）；条目级 sanitize、zip-slip 拒绝、撞名 token 第二把、超长失败、__MACOSX 等杂物跳过。首轮实录：105 档案 → **104 done / 556 文件 / +28.3GB**（含运行中另一 agent 在途新包的增量接入）；两个加密 rar（unrar 无 tty 退 255，note 有提示）密码在帖文 Pass/pw 提示里，人工补解落库（note 带密码）；唯一 failed 是 320427 mega zip **下载流串包**（本地头是别帖 mizumizuni 内容、中央目录才是自己，待重下决策）。单测 17 例（test_eros_extract.py），全量 319 passed。
+consume 落盘后的档案后处理：`scripts/extract_archives.py`（dry-run 默认 / `--execute` / `--ids`）+ `scrape_all/sites/eroscripts/extract.py` + `EroExtract` 表（archive_path 主键，files_json 供配对 provenance）。zip 走 stdlib；rar 走 `E:\Program Files\unrar\UnRAR.exe` 子进程，先解临时目录再按清洗路径搬入（unrar 只写原名）。解到包同名子目录 `J:\es_scrape\<topic>\<包stem>\`（包文件保留不删，dl_path 引用完整）；嵌套档案递归到不动点，深度上限 3。幂等：done 跳过、failed 重跑续传（逐条目体积比对）；条目级 sanitize、zip-slip 拒绝、撞名 token 第二把、超长失败、__MACOSX 等杂物跳过。首轮实录：105 档案 → **104 done / 556 文件 / +28.3GB**（含运行中另一 agent 在途新包的增量接入）；两个加密 rar（unrar 无 tty 退 255，note 有提示）密码在帖文 Pass/pw 提示里，人工补解落库（note 带密码）；唯一 failed 是 320427 mega zip **下载流串包**（本地头是别帖 mizumizuni 内容、中央目录才是自己）——用户人工重下落位后 EroLink 复位、`--ids=320427` 重解翻 done，**105/105 清零**。单测 17 例（test_eros_extract.py），全量 319 passed。次日新批次（rule34/hanime 流媒体 + /d 捞附件）又落 3 包，增量补跑 11 文件 +1.85GB → **108/108 done**（pixeldrain 行 dl_path 反斜杠风格 plan() 已归一兼容）。
 
-### 4.2 下一步：配对决策表
+### 4.2 配对决策表：草案已跑通（2026-08-30，只读）
 
-funscript↔视频分层匹配（exact stem → 轴变体 → NFKC 模糊 → ffprobe 时长 ±2s → 单视频兜底），walk topic 目录树（extract 已把包内内容铺出来，同目录 exact 白拿 88/91 混合包的部分自配对）；rename 方向与人工复核界面待定。
+生成器 `playground/eroscripts/checks/_pairing_draft.py`（库 mode=ro，ffprobe 只读探时长、缓存 `data/eroscripts/_pairing_dur_cache.json`），全表 `data/eroscripts/pairing_draft.txt`（819 决策行，含未配/歧义/复核明细）。
+
+- **素材基线**（流媒体两源接入后）：逻辑脚本 819（盘上 1058 个 funscript 按 (basename, size) 内容身份去重——root/包内/嵌套同名副本归并）；视频条目 608；帖级 249 两边都有。
+- **分层**（先到先得；层内多候选先 ffprobe 时长挑唯一）：exact 244 / axis+exact 210 / fuzzy 系 24 / tagstrip 124（剥尾随 (...)/[...] 署名/AV1 标签）/ contain 64（规范化互含，min 6）/ dur 28（名字层全空，时长 ±2s 全树唯一命中——罗马字↔日文全靠它：Marie→マリー、Marnie→瑪俐…全 dur✓）/ audio:exact 1（DLsite 音声包 323371：wav 当次级目标）/ single-video 1。
+- **内容身份与画质档**：同名同体积 = 镜像归一；同名不同体积 = 画质档（脚本时长已知挑 Δdur 最小，否则默认大件，conf B 进复核清单）；gofile 文件夹链接 dl_path 只记目录（331228 三帖共享案）→ 目录型 dl_path 整目录入池，跨帖 Rebirth 脚本 exact 配上。
+- **时长双职能**：名字层配上的对子验证（dur✓ / Δ±Ns / dur✗ 降置信进复核）；名字层全空时全树提案。single-video 兜底带时长闸门（319262 分集帖 dur✗ 不再硬配）。
+- **结果**：A 455 + A- 24 + B+ 179 + B 45 + C 1 = **704/819（86%）配上**；真歧义 14（双胞胎画质档 ケイ×2、hash 名双档、角色变体 (Adult)/(Lyria version)、Clean Version 剪辑版——本质都是人工二选一）；未配 101（49 付费墙 skipped + 30 帖无 media/source 链接 + 15 唯一视频时长对不上=分集/剪辑形态 + 6 死链 + 1 manual，除 15 分集案外均为媒体不存在的终态）；95 视频无脚本（正常，纯视频内容）。
+- **待定**：apply 方向（推荐视频改名对齐主脚本 stem、原名留库）、14 歧义 + 46 复核清单的人工裁决形态、分集案 15 的补集思路（后续批次或手动指定）。
 
 ---
 

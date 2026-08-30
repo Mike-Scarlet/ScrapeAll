@@ -116,6 +116,28 @@ class EroExtract:
 
 
 @PySQLModel(initialize_fields=True)
+class EroNorm:
+  """eroscripts 归一化库（es_norm）落位状态。原始库 es_scrape 只读不动，
+  target_path 主键 = es_norm 内相对路径（'/' 分隔）。配对成功的组：媒体 +
+  主脚本同 stem 平铺，多轴脚本 <stem>.<axis>.funscript，强度/设备变体进
+  <topic>/variants/。
+
+  kind: video|audio|script|axis-script|variant-script
+  action: copy（两边都≤1500 或非视频，文件直拷）| transcode（任一边>1500，
+          x264 crf20 按 2 的整数次幂对半除重编码出 mp4，音频直通）
+  status: done（盘上核验过，重跑跳过）/ failed（重跑重试）
+  """
+  target_path: str = Field(primary_key=True)
+  topic_id: int = Field(not_null=True, default=0)
+  source_path: str = Field(not_null=True, default="")
+  kind: str = Field(not_null=True, default="video")
+  action: str = Field(not_null=True, default="copy")
+  status: str = Field(not_null=True, default="pending")
+  note: str = Field(not_null=True, default="")
+  done_at: str = Field(not_null=True, default="")
+
+
+@PySQLModel(initialize_fields=True)
 class LibraryFolder:
   """local_library：NAS 已确认库（erodouga/creators/[4]confirmed）的作者文件夹镜像
 
