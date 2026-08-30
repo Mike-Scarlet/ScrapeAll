@@ -168,6 +168,15 @@ consume 落盘后的档案后处理：`scripts/extract_archives.py`（dry-run �
 - **结果**：A 455 + A- 24 + B+ 179 + B 45 + C 1 = **704/819（86%）配上**；真歧义 14（双胞胎画质档 ケイ×2、hash 名双档、角色变体 (Adult)/(Lyria version)、Clean Version 剪辑版——本质都是人工二选一）；未配 101（49 付费墙 skipped + 30 帖无 media/source 链接 + 15 唯一视频时长对不上=分集/剪辑形态 + 6 死链 + 1 manual，除 15 分集案外均为媒体不存在的终态）；95 视频无脚本（正常，纯视频内容）。
 - **待定**：apply 方向（推荐视频改名对齐主脚本 stem、原名留库）、14 歧义 + 46 复核清单的人工裁决形态、分集案 15 的补集思路（后续批次或手动指定）。
 
+### 4.3 es_norm 归一化库：全量跑通（2026-08-30）
+
+`J:\es_scrape`（原始库，只读不动）→ `J:\es_norm`（按 topic id 平铺：媒体+主脚本同 stem、多轴 `<stem>.<axis>.funscript`、变体 `<topic>/variants/`）。管线三件：`pairing.py`（7 层生产版匹配器 + 内容身份去重/画质档 + TopicMatcher）、`normalize.py`（pick_primary 裁决 + 转码计划 + LibraryNormalizer）、`scripts/normalize_library.py`（dry-run 默认 / `--execute` / `--ids`）+ `EroNorm` 表（target_path 主键，幂等 done+盘上核验跳过，`_resolve_target` 同源重跑复用同路径、外物撞名 token 改道）。
+
+- **转码算法**（atplayer normalize_media_in_folder 同款对半除，阈值 `NORM_MAX_LONG_EDGE=1500`）：任一边>1500 → 宽高各除阈值取 log2 较大者 ceil 出次数，factor=2^次数 整除后各自取偶；输出长边落 (750,1500]。1920×1080→960×540、3840×2160→960×540(÷4)、2560×1440→1280:720、竖版 2160×3840→540:960。x264 crf20 medium、`-c:a copy` 失败回退 aac、mp4 +faststart、转码后 ffprobe 时长核验；两边都≤1500 或非视频直拷（保原扩展名）。探不到尺寸=无法裁决交挂起。
+- **主脚本裁决链**：唯一非轴→直接主；全前缀规则（_hand/FAST/.raw 及 .p/.s/.t 缩写轴）；平凡唯一；多平凡/全变体→`PRIORITY_PATTERNS` 表（子串、表序先中、命中里取最短 stem）；同型多命中最短胜；全不中挂起。
+- **全量实录**：283 帖 / 300 配对组 / **1003 文件全部 done 零失败**（直拷 770 + 转码 233；先冒烟 5 帖 25 文件再全量 978）；幂等重跑落位 0/跳过 1003；转码抽查 8 档位 0 异常（尺寸精确对半、时长差≤0.02s、全 h264、音轨保留）。`es_norm` 18G vs 原库 95G。挂起 0——优先级表 6 条全中：307720 multi-axis（保轴位，Extended 817s 另组）、307726 (Nozomi)（385 vs 263 动作）、312236 无撇号直传（MD5 同镜像）、324307 Hard Paizuri 基线、328160 平凡 Sherry Birkin（最短 stem）、329619 Hard fap-hero（Soft 降档进变体）。歧义 14 / 未配 101 不进库（付费墙 49/无媒体链接 30/分集时长对不上 15/死链 6/manual 1），人工裁决后重跑即补。已知双出：fap-hero-heartfrozen 媒体在 322746/329619 各出一份（帖级自含，按需再议跨帖去重）。
+- 单测 33 例（test_eros_pairing.py 15 + test_eros_normalize.py 18），全量 381 passed。
+
 ---
 
 ## 附：常用巡检
