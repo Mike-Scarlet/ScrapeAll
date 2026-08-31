@@ -10,6 +10,12 @@ def host_of(url: str) -> str:
   return netloc[4:] if netloc.startswith("www.") else netloc
 
 
+def is_wait_timeout(e: Exception) -> bool:
+  """playwright / patchright 的 TimeoutError 不同类，按消息特征认（引擎无关）"""
+  msg = str(e)
+  return "Timeout" in msg or "timeout" in msg.lower()
+
+
 _CR_TOTAL_RE = re.compile(r"bytes\s+\d+-\d+/(\d+)", re.I)
 
 

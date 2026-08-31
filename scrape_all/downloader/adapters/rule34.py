@@ -4,7 +4,7 @@ import re
 from urllib.parse import parse_qs, urlsplit
 
 from scrape_all.downloader.adapters.base import (
-    DownloadResult, HostAdapter, ProbeResult, size_from_range_headers,
+    DownloadResult, HostAdapter, ProbeResult, is_wait_timeout, size_from_range_headers,
 )
 from scrape_all.downloader.fsutil import sanitize_filename, url_token
 
@@ -112,12 +112,6 @@ def local_filename(row: dict, vid: str) -> str:
   if name:
     return name
   return f"rule34_{vid}_{row.get('text') or 'video'}.mp4"
-
-
-def is_wait_timeout(e: Exception) -> bool:
-  """playwright / patchright 的 TimeoutError 不同类，按消息特征认（引擎无关）"""
-  msg = str(e)
-  return "Timeout" in msg or "timeout" in msg.lower()
 
 
 class Rule34Adapter(HostAdapter):

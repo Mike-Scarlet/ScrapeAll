@@ -46,6 +46,7 @@ def pick_links(host: str, limit: int) -> list[str]:
     "mega": "mega.nz/",
     "hanime": "hanime1.me/watch",   # /download?v= 形态用 --url 指定
     "rule34": "rule34video.com/video/",
+    "hmvmania": "hmvmania.com/video/",
   }
   key = keys[host]
   seen, out = set(), []
@@ -107,7 +108,7 @@ async def verify(urls: list[str], do_download: bool, stealth: bool = False):
 async def main():
   sys.stdout.reconfigure(encoding="utf-8", errors="replace")
   ap = argparse.ArgumentParser(description="下载基建真链接验证")
-  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile", "mega", "hanime", "rule34"),
+  ap.add_argument("--host", choices=("catbox", "eros", "pixeldrain", "gofile", "mega", "hanime", "rule34", "hmvmania"),
                   help="从库里挑该 host 的链接")
   ap.add_argument("--url", action="append", help="直接指定链接（可多次）")
   ap.add_argument("--limit", type=int, default=3)
