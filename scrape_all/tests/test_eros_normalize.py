@@ -9,7 +9,7 @@ from scrape_all.sites.eroscripts.normalize import (
 )
 from scrape_all.sites.eroscripts.pairing import PAIRED
 from scrape_all.sites.eroscripts.store import TopicStore
-from scrape_all.storage.models import EroLink, EroNorm, EroTopicItem
+from scrape_all.storage.models import EroExtract, EroLink, EroNorm, EroTopicItem
 
 TOPIC = 307002
 OTHER = 309999
@@ -315,3 +315,123 @@ def test_video_probe_missing_pends_group(env):
   totals = env.norm.run(execute=True)
   assert totals["pending_groups"] == 1 and totals["copied"] == 0
   assert norm_rows(env) == {}
+
+
+# ---- provenance 救援 ----
+
+def _set_links(env, entries):
+  """重写 TOPIC links_json（含 kind/section/post_number 的完整条目）"""
+  env.store.db.InsertRecord(EroTopicItem(
+      topic_id=TOPIC, url=f"https://discuss.eroscripts.com/t/x/{TOPIC}",
+      title="t", stat=3, links_json=json.dumps(entries),
+      first_seen=0.0, last_seen=0.0), on_conflict="OR REPLACE")
+  env.store.db.Commit()
+
+
+def test_provenance_external_twin_end_to_end(env):
+  # Kay2 形态：帖内无媒体，双胞胎视频全在他帖目录且等时长（dur 层并列
+  # 歧义）；楼层共位（post1 脚本+ケイ.mp4、post2 只有另一个双胞胎）裁决
+  put(env, f"{OTHER}/ケイ.mp4", b"a" * 100)
+  put(env, f"{OTHER}/ケイ.404683.mp4", b"b" * 200)
+  put(env, f"{TOPIC}/Kay2.funscript", fs_script([0, 200200]))
+  add_erolink(env.store, "https://s/Kay2.funscript", f"{TOPIC}/Kay2.funscript")
+  add_erolink(env.store, "https://v/404681", f"{OTHER}/ケイ.mp4")
+  add_erolink(env.store, "https://v/404683", f"{OTHER}/ケイ.404683.mp4")
+  _set_links(env, [
+      {"url": "https://s/Kay2.funscript", "kind": "script",
+       "section": "Script", "post_number": 1},
+      {"url": "https://v/404681", "kind": "source",
+       "section": "Source", "post_number": 1},
+      {"url": "https://v/404683", "kind": "source",
+       "section": "Source", "post_number": 2},
+  ])
+  env.probe_map["__default__"] = {"duration": 200.0, "width": 640,
+                                  "height": 360, "long_edge": 640}
+  totals = env.norm.run(execute=True)
+  assert totals["ambiguous"] == 0 and totals["unmatched"] == 0
+  assert dst_exists(env, f"{TOPIC}/Kay2.mp4")
+  assert dst_exists(env, f"{TOPIC}/Kay2.funscript")
+  rows = norm_rows(env)
+  assert rows[f"{TOPIC}/Kay2.mp4"].source_path == f"{OTHER}/ケイ.mp4"
+  assert not dst_exists(env, f"{TOPIC}/Kay2.404683.mp4")   # 双胞胎不误配
+
+
+def test_provenance_requires_script_section(env):
+  # 交叉引用楼层（section=''）不带模板意图 -> 不出手，歧义留给人工
+  put(env, f"{OTHER}/ケイ.mp4", b"a" * 100)
+  put(env, f"{OTHER}/ケイ.404683.mp4", b"b" * 200)
+  put(env, f"{TOPIC}/Kay2.funscript", fs_script([0, 200200]))
+  add_erolink(env.store, "https://s/Kay2.funscript", f"{TOPIC}/Kay2.funscript")
+  add_erolink(env.store, "https://v/404681", f"{OTHER}/ケイ.mp4")
+  add_erolink(env.store, "https://v/404683", f"{OTHER}/ケイ.404683.mp4")
+  _set_links(env, [
+      {"url": "https://s/Kay2.funscript", "kind": "script",
+       "section": "", "post_number": 1},
+      {"url": "https://v/404681", "kind": "source",
+       "section": "Source", "post_number": 1},
+      {"url": "https://v/404683", "kind": "source",
+       "section": "Source", "post_number": 2},
+  ])
+  env.probe_map["__default__"] = {"duration": 200.0, "width": 640,
+                                  "height": 360, "long_edge": 640}
+  totals = env.norm.run(execute=True)
+  assert totals["ambiguous"] == 1 and totals["copied"] == 0
+  assert not dst_exists(env, f"{TOPIC}/Kay2.mp4")
+
+
+def test_provenance_multi_script_axis_pack(env):
+  # 330402 形态：同楼层 6+1 脚本共指一个视频（名字 slug 对不上、时长差
+  # 156s 超 single 闸门）-> 全组配对，主+轴落位
+  put(env, f"{TOPIC}/少女彈珠汽水 7.mp4", b"v" * 100)
+  put(env, f"{TOPIC}/407591-480p.funscript", fs_script([0, 743000]))
+  put(env, f"{TOPIC}/407591-480p.pitch.funscript", fs_script([0, 743000]))
+  add_erolink(env.store, "https://s/a.funscript", f"{TOPIC}/407591-480p.funscript")
+  add_erolink(env.store, "https://s/p.funscript",
+              f"{TOPIC}/407591-480p.pitch.funscript")
+  add_erolink(env.store, "https://v/407591", f"{TOPIC}/少女彈珠汽水 7.mp4")
+  _set_links(env, [
+      {"url": "https://s/a.funscript", "kind": "script",
+       "section": "Script", "post_number": 1},
+      {"url": "https://s/p.funscript", "kind": "script",
+       "section": "Script", "post_number": 1},
+      {"url": "https://v/407591", "kind": "source",
+       "section": "Source", "post_number": 1},
+  ])
+  env.probe_map["__default__"] = {"duration": 899.0, "width": 640,
+                                  "height": 360, "long_edge": 640}
+  totals = env.norm.run(execute=True)
+  assert totals["unmatched"] == 0 and totals["pending_groups"] == 0
+  assert dst_exists(env, f"{TOPIC}/407591-480p.mp4")
+  assert dst_exists(env, f"{TOPIC}/407591-480p.funscript")
+  assert dst_exists(env, f"{TOPIC}/407591-480p.pitch.funscript")
+  rows = norm_rows(env)
+  assert rows[f"{TOPIC}/407591-480p.pitch.funscript"].kind == "axis-script"
+
+
+def test_provenance_resolves_archive_and_dir(env):
+  # URL 解析三形态：脚本 URL 是压缩包（EroExtract 反查）、媒体 URL 是
+  # gofile 目录（walk 单文件）
+  put(env, f"{TOPIC}/pack.zip", b"PK")
+  put(env, f"{TOPIC}/pack/X.funscript", fs_script([0, 85000]))
+  put(env, f"{OTHER}/folder/M.mp4", b"v" * 100)
+  add_erolink(env.store, "https://s/pack.zip", f"{TOPIC}/pack.zip")
+  add_erolink(env.store, "https://gofile.io/d/XX", f"{OTHER}/folder",
+              kind="media")
+  env.store.db.InsertRecord(EroExtract(
+      archive_path=f"{TOPIC}/pack.zip", topic_id=TOPIC, status="done",
+      depth=1, files_json=json.dumps(
+          [{"path": f"{TOPIC}/pack/X.funscript", "size": 1,
+            "src": "X.funscript", "action": "wrote"}])), on_conflict="OR REPLACE")
+  env.store.db.Commit()
+  _set_links(env, [
+      {"url": "https://s/pack.zip", "kind": "script",
+       "section": "Script", "post_number": 1},
+      {"url": "https://gofile.io/d/XX", "kind": "media",
+       "section": "Source", "post_number": 1},
+  ])
+  env.probe_map["__default__"] = {"duration": 100.0, "width": 640,
+                                  "height": 360, "long_edge": 640}
+  totals = env.norm.run(execute=True)
+  assert totals["unmatched"] == 0
+  assert dst_exists(env, f"{TOPIC}/X.mp4")
+  assert dst_exists(env, f"{TOPIC}/X.funscript")

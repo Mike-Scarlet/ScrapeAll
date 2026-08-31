@@ -54,13 +54,13 @@ def env(tmp_path):
   return env
 
 
-def run_topic(env, tid, files):
+def run_topic(env, tid, files, provenance=None):
   env.root = make_tree(env.tmp, tid, files)
   all_rels = rels(env.root, tid)
   vid = [r for r in all_rels if os.path.splitext(r)[1].lower() == ".mp4"]
   aud = [r for r in all_rels if os.path.splitext(r)[1].lower() == ".wav"]
   scr = [r for r in all_rels if r.endswith(".funscript")]
-  return env.matcher.match(vid, aud, scr, fs(env.root))
+  return env.matcher.match(vid, aud, scr, fs(env.root), provenance=provenance)
 
 
 def by_stem(result, stem):
@@ -225,3 +225,77 @@ def test_duration_verification_marks(env):
   env.script_dur = {f"{TOPIC}/X.funscript": 99.0}
   r = run_topic(env, TOPIC, {"X.mp4": b"v", "X.funscript": fs_script([0, 99000])})
   assert by_stem(r, "X")["dur_mark"] == "dur✓"
+
+
+# ---- provenance 救援层 ----
+
+def test_provenance_rescues_ambiguous_twin(env):
+  # Kay/Kay2 形态：双胞胎等时长，dur 探并列归 ambiguous -> 出处共位裁决
+  env.media_dur = {f"{TOPIC}/ケイ.mp4": 200.0, f"{TOPIC}/ケイ.404683.mp4": 200.0}
+  env.script_dur = {f"{TOPIC}/Kay.funscript": 200.2}
+  r = run_topic(env, TOPIC, {
+      "ケイ.mp4": b"a" * 100,
+      "ケイ.404683.mp4": b"b" * 200,
+      "Kay.funscript": fs_script([0, 200200]),
+  }, provenance={f"{TOPIC}/Kay.funscript": f"{TOPIC}/ケイ.404683.mp4"})
+  row = by_stem(r, "Kay")
+  assert row["status"] == PAIRED and row["method"] == "provenance"
+  pool = r["pools"]["video"]
+  assert pool[row["target_cid"]]["rel"] == f"{TOPIC}/ケイ.404683.mp4"
+  assert r["ambiguous"] == []
+
+
+def test_provenance_rescues_unmatched_with_normal_offset(env):
+  # 脚本末动作早于片尾 13s：single 闸门拦下（>10s），共位照救（时长降级为验证）
+  env.media_dur = {f"{TOPIC}/full-cut.mp4": 105.0, f"{TOPIC}/other.mp4": 300.0}
+  env.script_dur = {f"{TOPIC}/ローマ字.funscript": 92.0}
+  r = run_topic(env, TOPIC, {
+      "full-cut.mp4": b"a" * 100,
+      "other.mp4": b"b" * 200,
+      "ローマ字.funscript": fs_script([0, 92000]),
+  }, provenance={f"{TOPIC}/ローマ字.funscript": f"{TOPIC}/full-cut.mp4"})
+  row = by_stem(r, "ローマ字")
+  assert row["status"] == PAIRED and row["method"] == "provenance"
+  assert "dur✗" in row["dur_mark"]      # 大偏差保留配对但降置信
+
+
+def test_provenance_never_overrides_name_layer(env):
+  # 名字层 exact 已配上 -> 出处指向别的媒体也不翻转（幂等重跑零翻转）
+  env.media_dur = {f"{TOPIC}/X.mp4": 100.0, f"{TOPIC}/Y.mp4": 100.0}
+  r = run_topic(env, TOPIC, {
+      "X.mp4": b"a" * 100,
+      "Y.mp4": b"b" * 200,
+      "X.funscript": fs_script([0, 99000]),
+  }, provenance={f"{TOPIC}/X.funscript": f"{TOPIC}/Y.mp4"})
+  row = by_stem(r, "X")
+  assert row["status"] == PAIRED and row["method"] == "exact"
+  assert r["pools"]["video"][row["target_cid"]]["rel"] == f"{TOPIC}/X.mp4"
+
+
+def test_provenance_gate_script_longer_than_media(env):
+  # 单向闸门：脚本 300s 显著长于媒体 200s = 媒体疑似剪辑/预告，共位不硬配
+  env.media_dur = {f"{TOPIC}/cut.mp4": 200.0, f"{TOPIC}/other.mp4": 400.0}
+  env.script_dur = {f"{TOPIC}/S.funscript": 300.0}
+  r = run_topic(env, TOPIC, {
+      "cut.mp4": b"a" * 100,
+      "other.mp4": b"b" * 200,
+      "S.funscript": fs_script([0, 300000]),
+  }, provenance={f"{TOPIC}/S.funscript": f"{TOPIC}/cut.mp4"})
+  assert by_stem(r, "S")["status"] == UNMATCHED
+
+
+def test_provenance_target_missing_or_audio(env):
+  # 指向不在池内的 rel -> 无效，行为同无信号
+  env.media_dur = {f"{TOPIC}/V.mp4": 100.0}
+  r = run_topic(env, TOPIC, {"V.mp4": b"a", "S.funscript": fs_script([0, 100])},
+                provenance={f"{TOPIC}/S.funscript": f"{TOPIC}/not-on-disk.mp4"})
+  assert by_stem(r, "S")["method"] == "single-video"    # 回落正常兜底
+  # 指向音频池 -> target_pool 跟着走（脚本名与 wav 名对不上，名字层全空）
+  r = run_topic(env, TOPIC, {
+      "V.mp4": b"a",
+      "track02.wav": b"c" * 10,
+      "DLsite 版.funscript": fs_script([0, 999]),
+  }, provenance={f"{TOPIC}/DLsite 版.funscript": f"{TOPIC}/track02.wav"})
+  row = by_stem(r, "DLsite 版")
+  assert row["status"] == PAIRED and row["method"] == "provenance"
+  assert row["target_pool"] == "audio"

@@ -10,6 +10,12 @@ ambiguous 交人工）：
   tagstrip     再剥一层尾随 (...) / [...] 标签后 fuzzy（作者署名/AV1 尾巴）
   contain      规范化后互含（min 6 字符；"[Chussy]"署名 / Hard-Soft 前缀形态）
   dur          名字层全空 -> 时长 ±2s 全树唯一命中（rule34 slug 名的主战场）
+  provenance   救援层：名字/时长层全空或歧义时，发帖出处共位裁决——
+               normalize 侧从 links_json 构造 {脚本rel: 媒体rel} 注入
+               （同楼层 section='Script' 模板区脚本 + 恰一个媒体共现）。
+               只救卡死的、不推翻名字层已配上的（幂等重跑零翻转）；
+               时长降级为验证（脚本末动作早于片尾是常态），仅单向闸门：
+               脚本比媒体长 >DUR_WEAK = 媒体疑似剪辑/预告，不出手
   single-video 帖内唯一媒体兜底（带时长闸门：脚本末动作与媒体差 >DUR_WEAK
                不硬配——分集帖脚本对不上唯一视频）
 
@@ -38,7 +44,7 @@ QUALITY_RE = re.compile(r"[ _\-.]*(2160p|1440p|1080p|720p|480p|360p|4k|60fps|30f
 TAG_RE = re.compile(r"\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$")
 
 DUR_TIGHT = 2.0     # 强验证/提案窗（草案实测真对子窗）
-DUR_WEAK = 10.0     # 记 Δ 不判死的观察窗；single 兜底闸门也用它
+DUR_WEAK = 10.0     # 记 Δ 不判死的观察窗；single 兜底闸门 / provenance 单向闸门用它
 CONTAIN_MIN = 6
 
 PAIRED, AMBIGUOUS, UNMATCHED = "paired", "ambiguous", "unmatched"
@@ -201,8 +207,11 @@ class TopicMatcher:
 
   def match(self, vid_entries: list[str], aud_entries: list[str],
             script_entries: list[str], size_of: Callable[[str], int],
-            external: set[str] = frozenset()) -> dict:
-    """跑一个帖。返回：
+            external: set[str] = frozenset(),
+            provenance: dict[str, str] | None = None) -> dict:
+    """跑一个帖。provenance = {脚本 rel: 媒体 rel}（发帖出处共位信号，
+    normalize 侧构造，见模块 docstring 的 provenance 层）。
+    返回：
     rows: 每个逻辑脚本一行 {stem, size, paths, status, method, target_cid,
           target_pool, note, dur_mark}（target_pool 是 "video"|"audio"）
     pools: {"video": pool, "audio": pool}（拿 target 详情用）
@@ -245,6 +254,23 @@ class TopicMatcher:
       if not cid and method != AMBIGUOUS:
         cid, method, note = self._resolve(s["stem"], sd, aud_pool, prefix="audio:")
         pool, pool_name = aud_pool, "audio"
+      # 出处救援：名字/时长层全空或歧义才出手（已配上的不动，幂等重跑
+      # 零翻转）。作者共位意图强于单纯唯一性，排在 single 兜底之前。
+      if not cid and provenance:
+        hint = next((provenance[p] for p in s["paths"] if p in provenance), None)
+        if hint:
+          for pool_x, name_x in ((vid_pool, "video"), (aud_pool, "audio")):
+            hcid = next((c for c, ent in pool_x.items()
+                         if hint in ent["paths"]), None)
+            if hcid is None:
+              continue
+            d = self._dur(pool_x, hcid)
+            # 单向闸门：脚本显著长于媒体 = 媒体疑似剪辑/预告，共位也不硬配；
+            # 反向（脚本早完）是 funscript 常态，时长只作验证不拦
+            if sd is None or d is None or sd - d <= DUR_WEAK:
+              cid, method, note = hcid, "provenance", ""
+              pool, pool_name = pool_x, name_x
+            break
       single_note = ""
       if not cid and method != AMBIGUOUS:
         cid, single_note = single_fallback(sd, vid_pool, "视频")

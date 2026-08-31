@@ -177,6 +177,16 @@ consume 落盘后的档案后处理：`scripts/extract_archives.py`（dry-run �
 - **全量实录**：283 帖 / 300 配对组 / **1003 文件全部 done 零失败**（直拷 770 + 转码 233；先冒烟 5 帖 25 文件再全量 978）；幂等重跑落位 0/跳过 1003；转码抽查 8 档位 0 异常（尺寸精确对半、时长差≤0.02s、全 h264、音轨保留）。`es_norm` 18G vs 原库 95G。挂起 0——优先级表 6 条全中：307720 multi-axis（保轴位，Extended 817s 另组）、307726 (Nozomi)（385 vs 263 动作）、312236 无撇号直传（MD5 同镜像）、324307 Hard Paizuri 基线、328160 平凡 Sherry Birkin（最短 stem）、329619 Hard fap-hero（Soft 降档进变体）。歧义 14 / 未配 101 不进库（付费墙 49/无媒体链接 30/分集时长对不上 15/死链 6/manual 1），人工裁决后重跑即补。已知双出：fap-hero-heartfrozen 媒体在 322746/329619 各出一份（帖级自含，按需再议跨帖去重）。
 - 单测 33 例（test_eros_pairing.py 15 + test_eros_normalize.py 18），全量 381 passed。
 
+### 4.4 配对救援：provenance 出处共位层（2026-08-31）
+
+**动机**：EroLink 按 URL 全局去重、媒体落盘跟着 first_topic_id 走，跨帖共享媒体靠 `external_rels` 拉回配对池，但两类卡死形态名字+时长层无解——等时长双胞胎（Kay/Kay2：ケイ 两个视频同名不同体积、±2s 分不开）、脚本末动作早于片尾 >10s 被 single 闸门拦下（funscript 常态：动作结束片尾还在放，11 个）。出手信号是页面自带的：`links_json` 每条带 post_number/section 楼层出处，模板区脚本与媒体同楼层共现就是作者意图。前置审计（`playground/eroscripts/checks/_provenance_audit.py`）：出处 vs EroNorm done 组对照 = 确认 86 / 矛盾 10（8 同体积镜像 + 1 同时长画质档 + 1 ★323951 電とFukkireta 名字层配 96s 短版 vs 出处指 387s 全版，真错配嫌疑留人工）/ 无信号 204；可救面 13 脚本。
+
+**实现**：`pairing.TopicMatcher.match` 增 `provenance={脚本rel: 媒体rel}` 救援层，插在名字层全空/歧义之后、single 兜底之前；`normalize.provenance_hints(tid)` 构造——同楼层 `section='Script'`（模板区；交叉引用楼层 section='' 不算数，330402 post2 镜像脚本实证）+ 恰一个已下载媒体（kind media/source）共现；URL→rel 三形态（文件直回 / gofile 目录 walk / EroExtract files_json 反查嵌套包递归）；同脚本被多楼层指到不同媒体=出处打架不出手。两条安全边界：**只救卡死、不推翻名字层已配**（幂等重跑零翻转，86 确认组 method 不变）；时长降级为验证（dur_mark 照标），仅单向闸门——脚本比媒体长 >DUR_WEAK = 媒体疑似剪辑/预告不出手。
+
+**实录**：7 帖定向 execute 收编 17 文件（直拷 14 + 转码 3：広／Hiro 764:540、メスガキ 960:540、407591 960:540；330402 六脚本全组=主+5轴）；329355 两脚本配对成功但组挂起（多平凡原始 19：45/19：50 待 PRIORITY_PATTERNS 裁决）。全量 execute：落位 2 + skip 1020 + 0 失败——那 2 件是 308186 exact 组（非 provenance：上次收口时探不到尺寸挂起、期间审计脚本补全共享探针缓存后解除，基线同因 300→301 组）。计划级 diff 实证零翻转：新旧代码全量 dry-run 组清单 diff 恰好 +6 行新组、无既有行变动。终态 **283 帖 / 307 组 / 1022 文件全 done**；歧义 14→12、未配 101→89；新落 19 件盘上核验 0 异常（直拷体积精确对上、转码尺寸/时长/h264 全对）。单测 +9（pairing 20 + normalize 22 = 42），全量 390 passed。
+
+**遗留**：329355 主脚本二选一（裁决后加一条 PRIORITY_PATTERNS 重跑即落）；310118/331515 双胞胎无 STRONG 信号留人工；323951 ★错配嫌疑人工核；审计三脚本（provenance_audit / twin_duration_census / landing_verify）留 `playground/eroscripts/checks/` 复跑。
+
 ---
 
 ## 附：常用巡检

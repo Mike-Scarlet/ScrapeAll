@@ -9,6 +9,10 @@
     PRIORITY_PATTERNS 优先级表（子串匹配，先到先得）把第一提为主脚本，
     表无命中整组挂起（pending，人工裁决后重跑幂等补进）
   - 组内多个平凡原始候选同样挂起（人工裁决）
+配对救援（provenance_hints）：links_json 楼层共位信号注入 matcher——
+同楼层 section='Script' 模板区脚本与恰一个已下载媒体共现 -> 该脚本 ↔
+该媒体。等时长双胞胎（名字对不上、±2s 分不开）和"脚本末动作早于片尾
+被 single 闸门拦下"的形态靠它裁决；只救卡死脚本，不推翻既有配对。
 - 视频：任一边 >1500 -> ffmpeg x264 crf20 medium 对半除重编码出 mp4
   （2 的整数次幂除到 (750,1500]，音频直通，直通失败回退 aac；转码后
   ffprobe 时长核验）；两边都 <=1500 文件直拷。
@@ -25,6 +29,7 @@ import math
 import os
 import shutil
 import subprocess
+from collections import defaultdict
 from typing import Callable
 
 from scrape_all.sites.eroscripts import pairing
@@ -33,7 +38,7 @@ from scrape_all.sites.eroscripts.pairing import (
     PAIRED, VIDEO_EXTS, AUDIO_EXTS, SCRIPT_EXTS,
     normalize_stem, strip_axis_suffix, strip_trailing_tag,
 )
-from scrape_all.storage.models import EroLink, EroNorm, EroTopicItem
+from scrape_all.storage.models import EroExtract, EroLink, EroNorm, EroTopicItem
 
 NORM_MAX_LONG_EDGE = 1500    # 归一化阈值（atplayer 同款）：任一边超过即
                               # 对半除——1920x1080 -> 960x540（÷2），
@@ -349,6 +354,96 @@ class LibraryNormalizer:
         out.add(rel)
     return out
 
+  # ---- 发帖出处共位信号 ----
+
+  def _archive_rels(self, archive_rel: str, exts: set[str],
+                    seen: set[str] | None = None) -> list[str]:
+    """压缩包 URL -> 解压内容 rel。EroExtract.files_json 反查（含嵌套
+    包递归）；未登记/无记录回空。"""
+    seen = seen if seen is not None else set()
+    if archive_rel in seen:
+      return []
+    seen.add(archive_rel)
+    row = self.store.db.QueryOne(EroExtract, where="archive_path = ?",
+                                 params=(archive_rel,))
+    if row is None:
+      return []
+    try:
+      files = json.loads(row.files_json or "[]")
+    except (ValueError, TypeError):
+      return []
+    out: list[str] = []
+    for f in files:
+      p = ((f or {}).get("path") or "").replace("\\", "/")
+      ext = os.path.splitext(p)[1].lower()
+      if ext in exts:
+        out.append(p)
+      elif ext in (".zip", ".rar"):
+        out.extend(self._archive_rels(p, exts, seen))
+    return out
+
+  def _link_rels(self, url: str, exts: set[str]) -> list[str]:
+    """URL -> 盘上 rel（'/' 风格）。只认已下载行：文件型扩展名对口直回；
+    目录型（gofile 文件夹链接）walk 取指定扩展；压缩包走 EroExtract。
+    未登记/未下载/不在盘上回空。"""
+    row = self.store.db.QueryOne(EroLink, where="url = ?", params=(url,))
+    if row is None or row.dl_status != "downloaded" or not row.dl_path:
+      return []
+    rel = row.dl_path.replace("\\", "/")
+    abspath = os.path.join(self.src_root, *rel.split("/"))
+    if os.path.isdir(abspath):
+      out = []
+      for dp, _dn, fns in os.walk(abspath):
+        for fn in fns:
+          if os.path.splitext(fn)[1].lower() in exts:
+            out.append(os.path.relpath(os.path.join(dp, fn),
+                                       self.src_root).replace(os.sep, "/"))
+      return out
+    if os.path.splitext(rel)[1].lower() in exts and os.path.isfile(abspath):
+      return [rel]
+    return self._archive_rels(rel, exts)
+
+  def provenance_hints(self, tid: str) -> dict[str, str]:
+    """发帖出处共位信号（STRONG）：同楼层 section='Script' 的脚本链接与
+    恰好一个媒体链接（kind media/source）共现 -> {脚本 rel: 媒体 rel}。
+    交叉引用楼层（section=''）不带作者模板意图不算数；脚本被多个楼层
+    指到不同媒体 = 出处打架不出手；媒体解析不出唯一文件同样不出手。
+    键可能落他帖目录（跨帖脚本），matcher 里对不上条目自然失效。"""
+    out: dict[str, str] = {}
+    topic = self.store.db.QueryOne(EroTopicItem, where="topic_id = ?",
+                                   params=(int(tid),))
+    if topic is None:
+      return out
+    try:
+      entries = json.loads(topic.links_json or "[]")
+    except (ValueError, AttributeError, TypeError):
+      return out
+    posts: dict = defaultdict(lambda: {"scripts": [], "media": []})
+    for e in entries:
+      if not isinstance(e, dict):
+        continue
+      url, kind = e.get("url") or "", e.get("kind") or ""
+      if not url or kind not in ("script", "media", "source"):
+        continue
+      if kind == "script":
+        # STRONG 只认模板区脚本；section 空 = 回帖交叉引用
+        if (e.get("section") or "").strip().lower() != "script":
+          continue
+        posts[e.get("post_number")]["scripts"].append(url)
+      else:
+        posts[e.get("post_number")]["media"].append(url)
+    cand: dict[str, set[str]] = defaultdict(set)
+    for slot in posts.values():
+      if len(slot["media"]) != 1 or not slot["scripts"]:
+        continue
+      media_rels = self._link_rels(slot["media"][0], VIDEO_EXTS | AUDIO_EXTS)
+      if len(media_rels) != 1:
+        continue
+      for u in slot["scripts"]:
+        for s_rel in self._link_rels(u, SCRIPT_EXTS):
+          cand[s_rel].add(media_rels[0])
+    return {s: next(iter(ms)) for s, ms in cand.items() if len(ms) == 1}
+
   # ---- 路径 / 探针 ----
 
   def _abs(self, rel: str) -> str:
@@ -476,7 +571,8 @@ class LibraryNormalizer:
   # ---- 主流程 ----
 
   def _plan_groups(self, tid: str, t: dict) -> tuple[list[dict], list[dict], dict]:
-    """单帖：match -> groups（补 pick_primary 决策 + 媒体 action）。"""
+    """单帖：match（带出处共位救援）-> groups（补 pick_primary 决策 + 媒体
+    action）。"""
     external = self.external_rels(tid)
     matcher = pairing.TopicMatcher(self._media_duration, self._script_duration)
     result = matcher.match(
@@ -485,7 +581,7 @@ class LibraryNormalizer:
         t["aud"] + sorted(r for r in external
                           if os.path.splitext(r)[1].lower() in AUDIO_EXTS),
         t["scr"], self._size_of,
-        external=external)
+        external=external, provenance=self.provenance_hints(tid))
     groups = group_by_target(result)
     planned, pending = [], []
     for g in groups:
